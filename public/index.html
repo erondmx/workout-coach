@@ -122,7 +122,7 @@
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let S = { plan: {}, weights: {}, progress: { sets: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
+let S = { plan: {}, weights: {}, hints: {}, progress: { sets: {}, reps: {}, effort: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
 let day = 'A';
 
 // ---------- API ----------
@@ -139,11 +139,13 @@ async function api(method, url, body) {
     return data;
 }
 
+const progressPayload = () => ({ sets: S.progress.sets, weights: S.weights, reps: S.progress.reps, effort: S.progress.effort, day });
+
 let saveTimer = null;
 function scheduleSave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-        api('PUT', '/api/state', { sets: S.progress.sets, weights: S.weights, day }).catch(() => {});
+        api('PUT', '/api/state', progressPayload()).catch(() => {});
     }, 400);
 }
 
@@ -181,6 +183,39 @@ function switchDay(d) {
 document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => switchDay(b.dataset.day)));
 
 function restSecs(ex) { return ex.rest ? parseInt(ex.rest, 10) : 45; }
+
+const HINT_STYLE = {
+    up: ['bg-emerald-500/10 border-emerald-500/40 text-emerald-300', 'fa-arrow-trend-up'],
+    down: ['bg-amber-500/10 border-amber-500/40 text-amber-300', 'fa-arrow-trend-down'],
+    hold: ['bg-slate-700/40 border-slate-600 text-slate-300', 'fa-equals'],
+    reps: ['bg-blue-500/10 border-blue-500/40 text-blue-300', 'fa-repeat'],
+};
+function hintHtml(ex, w) {
+    const h = !ex.isCardio && S.hints && S.hints[ex.id];
+    if (!h) return '';
+    const [cls, icon] = HINT_STYLE[h.type] || HINT_STYLE.hold;
+    const canApply = (h.type === 'up' || h.type === 'down') && Number(w) !== h.to;
+    return `<div class="mt-3 text-xs border rounded-lg px-3 py-2 flex items-start justify-between gap-2 ${cls}">
+        <span><i class="fa-solid ${icon} mr-1"></i>${esc(h.text)}</span>
+        ${canApply ? `<button data-apply="${esc(ex.id)}" data-to="${h.to}" class="shrink-0 bg-white/10 hover:bg-white/20 rounded-md px-2 py-1 font-bold">Aplicar</button>` : ''}
+    </div>`;
+}
+const EFFORT_BTNS = [['easy', 'Fácil'], ['ok', 'Na medida'], ['hard', 'Pesado']];
+function feedbackHtml(ex) {
+    const cur = S.progress.effort[ex.id];
+    const reps = S.progress.reps[ex.id];
+    return `<div class="mt-3 pt-3 border-t border-slate-700/60">
+        <div class="flex items-center justify-between gap-2">
+            <label class="text-xs text-slate-400">Reps na pior série</label>
+            <input type="number" inputmode="numeric" placeholder="-" value="${reps ?? ''}" data-reps="${esc(ex.id)}"
+                class="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-sky-300 focus:outline-none focus:border-sky-500">
+        </div>
+        <div class="flex items-center justify-between gap-2 mt-2">
+            <span class="text-xs text-slate-400">Como foi?</span>
+            <div class="flex gap-1">${EFFORT_BTNS.map(([k, label]) => `<button data-effort="${esc(ex.id)}" data-value="${k}" class="text-xs px-2 py-1 rounded-md border ${cur === k ? 'bg-orange-500 border-orange-500 text-white font-bold' : 'bg-slate-700 border-slate-600 text-slate-300'}">${label}</button>`).join('')}</div>
+        </div>
+    </div>`;
+}
 
 function render() {
     const list = $('#workout-list');
@@ -220,16 +255,26 @@ function render() {
                         class="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-orange-400 focus:outline-none focus:border-orange-500">
                 </div>`}
             </div>
+            ${hintHtml(ex, w)}
             <div class="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between">
                 <span class="text-xs text-slate-400">${ex.isCardio ? 'Status:' : 'Marcar séries:'}</span>
                 <div class="flex gap-2">${setsHtml}</div>
-            </div>`;
+            </div>
+            ${!ex.isCardio && done.length ? feedbackHtml(ex) : ''}`;
         list.appendChild(card);
     });
     updateProgress();
 }
 
 $('#workout-list').addEventListener('click', (e) => {
+    const ap = e.target.closest('[data-apply]');
+    if (ap) { S.weights[ap.dataset.apply] = Number(ap.dataset.to); scheduleSave(); render(); return; }
+    const ef = e.target.closest('[data-effort]');
+    if (ef) {
+        const id = ef.dataset.effort;
+        if (S.progress.effort[id] === ef.dataset.value) delete S.progress.effort[id]; else S.progress.effort[id] = ef.dataset.value;
+        scheduleSave(); render(); return;
+    }
     const b = e.target.closest('.set-btn');
     if (!b) return;
     unlockAudio();
@@ -247,6 +292,12 @@ $('#workout-list').addEventListener('click', (e) => {
 });
 
 $('#workout-list').addEventListener('input', (e) => {
+    const rid = e.target.dataset.reps;
+    if (rid) {
+        if (e.target.value === '') delete S.progress.reps[rid]; else S.progress.reps[rid] = Number(e.target.value);
+        scheduleSave();
+        return;
+    }
     const id = e.target.dataset.weight;
     if (!id) return;
     if (e.target.value === '') delete S.weights[id]; else S.weights[id] = Number(e.target.value);
@@ -347,7 +398,7 @@ $('#chat-form').addEventListener('submit', async (e) => {
     renderChat();
     $('#chat-send').disabled = true;
     try {
-        await api('PUT', '/api/state', { sets: S.progress.sets, weights: S.weights, day }); // coach vê o que você acabou de marcar
+        await api('PUT', '/api/state', progressPayload()); // coach vê o que você acabou de marcar
         const r = await api('POST', '/api/coach', { message: text });
         S = r.state;
         if (r.changed.length) day = r.changed[0];

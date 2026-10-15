@@ -1,4 +1,4 @@
-import { sanitizeDay, DAYS } from './lib.js';
+import { sanitizeDay, computeHints, DAYS } from './lib.js';
 
 export const MODEL = process.env.COACH_MODEL || 'anthropic/claude-sonnet-5.5';
 const EFFORT = process.env.COACH_REASONING || 'low';
@@ -12,9 +12,10 @@ Regras:
 - Ajustes típicos: subir/baixar séries ou repetições (progressão), trocar exercício por dor/indisponibilidade, mudar descanso, encurtar treino por falta de tempo, mudar cardio.
 - Dor aguda, tontura, dor no peito ou lesão: oriente a parar e procurar um profissional de saúde; não prescreva treino para tratar lesão. Nada de dieta restritiva extrema ou suplemento/medicação.
 - Ao chamar update_day, envie o dia COMPLETO (todos os exercícios). Mantenha o mesmo id dos exercícios que permanecem (assim a carga registrada é preservada) e crie ids novos curtos (ex.: a9) só para exercícios novos.
-- "rest" é só número de segundos (ex.: "60"). Exercícios de cardio usam isCardio=true e sets=1.
+- "rest" é só número de segundos (ex.: "60"). Exercícios de cardio usam isCardio=true e sets=1. Informe equip (machine/dumbbell/barbell) nos exercícios de força.
 - Explique no texto, em 1-2 frases, o que mudou e por quê.
-- Use o histórico de cargas e séries para decidir progressão (ex.: bateu todas as séries com folga duas vezes → suba carga ou reps).`;
+- Use o histórico (séries, cargas, repetições feitas e esforço fácil/na medida/pesado) para decidir progressão.
+- O app já mostra na tela uma dica automática de carga por exercício (dupla progressão: completou todas as séries no topo das repetições e achou fácil → subir; pesado ou incompleto → manter; 2x seguidas → descer um degrau). Pesos reais da academia: máquinas e barra variam de 5 em 5 kg, halteres de 1 a 2 kg (nunca sugira cargas quebradas tipo 32,5 kg). Veja "SUGESTÕES AUTOMÁTICAS" abaixo e NÃO contradiga essas dicas sem motivo; mudanças de carga ficam por conta do usuário, você ajusta séries, repetições, exercícios e descanso.`;
 
 const TOOLS = [
   {
@@ -40,6 +41,7 @@ const TOOLS = [
                 reps: { type: 'string' },
                 rest: { type: 'string', description: 'segundos, ex.: "60"' },
                 isCardio: { type: 'boolean' },
+              equip: { type: 'string', enum: ['machine', 'dumbbell', 'barbell'], description: 'machine = máquina/polia (pesos de 5 em 5 kg); dumbbell = halteres; barbell = barra/Smith' },
               },
               required: ['id', 'name', 'sets', 'reps'],
             },
@@ -53,7 +55,9 @@ const TOOLS = [
 
 function context(db) {
   const recent = db.history.slice(-8);
-  return `PLANO ATUAL (JSON):\n${JSON.stringify(db.plan)}\n\nCARGAS ATUAIS (kg por id de exercício):\n${JSON.stringify(db.weights)}\n\nPROGRESSO DE HOJE (${db.progress.date}, dia ${db.progress.day}):\n${JSON.stringify(db.progress.sets)}\n\nÚLTIMOS TREINOS (séries feitas por id e cargas):\n${JSON.stringify(recent)}`;
+  const hints = Object.fromEntries(Object.entries(computeHints(db)).map(([id, h]) => [id, h.text]));
+  const today = { séries: db.progress.sets, repsPiorSerie: db.progress.reps || {}, esforço: db.progress.effort || {} };
+  return `PLANO ATUAL (JSON):\n${JSON.stringify(db.plan)}\n\nCARGAS ATUAIS (kg por id de exercício):\n${JSON.stringify(db.weights)}\n\nPROGRESSO DE HOJE (${db.progress.date}, dia ${db.progress.day}):\n${JSON.stringify(today)}\n\nÚLTIMOS TREINOS (séries feitas, cargas, reps e esforço por id):\n${JSON.stringify(recent)}\n\nSUGESTÕES AUTOMÁTICAS DE CARGA (já exibidas ao usuário):\n${JSON.stringify(hints)}`;
 }
 
 // Retorna { reply, changes: [{day, day_plan, reason}] }. Não altera o db.
