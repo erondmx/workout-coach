@@ -1,4 +1,4 @@
-import { sanitizeDay, computeHints, computeAssess, DAYS } from './lib.js';
+import { sanitizeDay, sanitizeSwap, computeHints, computeAssess, DAYS } from './lib.js';
 
 export const MODEL = process.env.COACH_MODEL || 'anthropic/claude-sonnet-5.5';
 const EFFORT = process.env.COACH_REASONING || 'low';
@@ -14,10 +14,28 @@ Regras:
 - Ao chamar update_day, envie o dia COMPLETO (todos os exercícios). Mantenha o mesmo id dos exercícios que permanecem (assim a carga registrada é preservada) e crie ids novos curtos (ex.: a9) só para exercícios novos.
 - "rest" é só número de segundos (ex.: "60"). Exercícios de cardio usam isCardio=true e sets=1. Informe equip (machine/dumbbell/barbell) nos exercícios de força.
 - Explique no texto, em 1-2 frases, o que mudou e por quê.
+- FOTOS DE APARELHOS: o usuário pode mandar fotos da academia (e dizer qual exercício não achou, com o id). Descreva em 1 frase o que você identificou e quão seguro está; se a foto não permitir identificar, peça outra mais de perto ou o nome na placa, e NUNCA invente. Diga se o aparelho serve para o exercício/grupo muscular e como usar de forma resumida. Para trocar só por hoje (padrão, se o usuário não disse que é definitivo), use substitute_today; se ele pedir para trocar "para sempre", use update_day com um id NOVO para o exercício trocado (assim a carga do aparelho antigo não se mistura). Mantenha o mesmo grupo muscular e séries/reps parecidas. Lembre de ler as instruções do aparelho, começar leve e pedir ajuda a um instrutor se não souber usar. Não comente sobre pessoas que apareçam nas fotos.
 - Use o histórico (séries, cargas, repetições feitas em cada série) para decidir progressão.
 - O app já mostra na tela uma dica automática de carga por exercício (dupla progressão: todas as séries no topo da faixa de reps → subir um degrau; pior série abaixo de 70% do mínimo da faixa → descer um degrau; abaixo da faixa → manter, 2x seguidas → descer; dentro da faixa → manter e buscar o topo). Pesos reais da academia: máquinas e barra variam de 5 em 5 kg, halteres de 1 a 2 kg (nunca sugira cargas quebradas tipo 32,5 kg). Veja "SUGESTÕES AUTOMÁTICAS" abaixo e NÃO contradiga essas dicas sem motivo; mudanças de carga ficam por conta do usuário, você ajusta séries, repetições, exercícios e descanso.`;
 
 const TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'substitute_today',
+      description: 'Substitui um exercício do plano por outro aparelho/movimento SÓ NO TREINO DE HOJE (o plano não muda).',
+      parameters: {
+        type: 'object',
+        properties: {
+          exercise_id: { type: 'string', description: 'id do exercício do plano a substituir' },
+          name: { type: 'string', description: 'nome do exercício/aparelho substituto' },
+          equip: { type: 'string', enum: ['machine', 'dumbbell', 'barbell'] },
+          reason: { type: 'string' },
+        },
+        required: ['exercise_id', 'name', 'reason'],
+      },
+    },
+  },
   {
     type: 'function',
     function: {
@@ -61,7 +79,7 @@ function context(db) {
 }
 
 // Retorna { reply, changes: [{day, day_plan, reason}] }. Não altera o db.
-export async function askCoach(db, userMessage) {
+export async function askCoach(db, userMessage, images = []) {
   if (!process.env.OPENROUTER_API_KEY) {
     const e = new Error('OPENROUTER_API_KEY não configurada no servidor');
     e.status = 503;
@@ -83,7 +101,7 @@ export async function askCoach(db, userMessage) {
       messages: [
         { role: 'system', content: `${SYSTEM}\n\n${context(db)}` },
         ...history,
-        { role: 'user', content: userMessage },
+        { role: 'user', content: images.length ? [{ type: 'text', text: userMessage }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))] : userMessage },
       ],
     }),
     signal: AbortSignal.timeout(60_000),
@@ -94,14 +112,23 @@ export async function askCoach(db, userMessage) {
 
   let reply = typeof msg.content === 'string' ? msg.content : '';
   const changes = [];
+  const swaps = [];
   const rejected = [];
   for (const call of msg.tool_calls || []) {
-    if (call.function?.name !== 'update_day') continue;
+    if (!['update_day', 'substitute_today'].includes(call.function?.name)) continue;
     let args = {};
     try {
       args = JSON.parse(call.function.arguments || '{}');
     } catch {
       rejected.push('argumentos inválidos');
+      continue;
+    }
+    if (call.function.name === 'substitute_today') {
+      try {
+        swaps.push({ ...sanitizeSwap(db.plan, args), reason: String(args.reason || '') });
+      } catch (err) {
+        rejected.push(`troca: ${err.message}`);
+      }
       continue;
     }
     const { day, reason, ...rest } = args;
@@ -119,5 +146,5 @@ export async function askCoach(db, userMessage) {
   if (rejected.length) reply += `
 
 (Não consegui aplicar um ajuste: ${rejected.join('; ')}. Tente pedir de novo.)`;
-  return { reply: reply || 'Ok!', changes };
+  return { reply: reply || 'Ok!', changes, swaps };
 }

@@ -61,3 +61,12 @@ Degrau = salto real da academia: máquina/polia/barra 5 kg; halteres 1 kg (< 10 
 - Estimar RIR de cabeça é impreciso (mais ainda em séries longas), o que reforça usar as reps registradas em vez de "achismo".
 
 **Limites honestos:** os cortes numéricos (70% do mínimo, 2 treinos seguidos, 1 degrau) são decisões de engenharia coerentes com esses princípios, **não** limiares validados em estudo. Ajuste em `lib.js` (`assessSets`/`suggest`) se achar agressivo ou conservador demais. O app não substitui um profissional de educação física.
+
+## Fotos de aparelhos
+
+No chat do coach, o botão de câmera anexa até 4 fotos (reduzidas no celular para ~1024 px). Cada exercício tem o link
+"Não achei o aparelho", que abre o chat já indicando qual exercício. O modelo (com visão) descreve o que identificou,
+diz se serve e escolhe entre `substitute_today` (só hoje: o card mostra "Hoje, no lugar de…" e esse exercício **não** entra
+no histórico de progressão, pois a carga é de outra máquina) ou `update_day` (troca definitiva, com id novo e "Desfazer").
+As fotos não são gravadas no servidor (só a contagem no chat) e vão ao provedor do modelo (OpenRouter): evite mostrar rostos.
+O reconhecimento de aparelhos por foto pode errar; o coach é instruído a admitir incerteza e a recomendar ler as instruções da máquina.

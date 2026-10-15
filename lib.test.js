@@ -108,3 +108,36 @@ test('rollover arquiva reps por série', () => {
   assert.deepEqual(db.history[0].setReps, { a2: { 1: 12 } });
   assert.deepEqual(db.progress.setReps, {});
 });
+
+import { applySwaps, sanitizeImages, sanitizeSwap, computeAssess } from './lib.js';
+
+const PLAN = { A: { title: 'A', desc: '', exercises: [{ id: 'a2', name: 'Leg Press 45º', sets: 4, reps: '12 reps', equip: 'machine' }, { id: 'a1', name: 'Esteira', sets: 1, reps: '5 min', isCardio: true }] } };
+
+test('applySwaps cria exercício temporário com id próprio e guarda o original', () => {
+  const out = applySwaps(PLAN, { a2: { name: 'Hack Squat', equip: 'machine' } });
+  const ex = out.A.exercises[0];
+  assert.equal(ex.id, 'a2s');
+  assert.equal(ex.name, 'Hack Squat');
+  assert.equal(ex.swappedFrom, 'Leg Press 45º');
+  assert.equal(PLAN.A.exercises[0].id, 'a2'); // plano original intacto
+  assert.equal(applySwaps(PLAN, {}), PLAN);
+});
+test('sanitizeSwap valida id existente e não permite cardio', () => {
+  assert.equal(sanitizeSwap(PLAN, { exercise_id: 'a2', name: 'Hack', equip: 'machine' }).swap.name, 'Hack');
+  assert.throws(() => sanitizeSwap(PLAN, { exercise_id: 'zz', name: 'x' }), /não encontrado/);
+  assert.throws(() => sanitizeSwap(PLAN, { exercise_id: 'a1', name: 'x' }), /não encontrado/);
+  assert.throws(() => sanitizeSwap(PLAN, { exercise_id: 'a2', name: ' ' }), /vazio/);
+});
+test('sanitizeImages aceita data URL de imagem e rejeita o resto', () => {
+  const ok = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+  assert.deepEqual(sanitizeImages([ok]), [ok]);
+  assert.deepEqual(sanitizeImages(undefined), []);
+  assert.throws(() => sanitizeImages(['http://evil.example/x.jpg']), /inválida/);
+  assert.throws(() => sanitizeImages(['data:text/html;base64,PHNjcmlwdD4=']), /inválida/);
+  assert.throws(() => sanitizeImages([ok, ok, ok, ok, ok]), /no máximo/);
+});
+test('computeAssess avalia o exercício trocado de hoje pelo id temporário', () => {
+  const db = { plan: PLAN, progress: { swaps: { a2: { name: 'Hack' } }, sets: { a2s: [1, 2, 3, 4] }, setReps: { a2s: { 1: 12, 2: 12, 3: 12, 4: 12 } } } };
+  assert.equal(computeAssess(db).a2s.level, 'top');
+  assert.equal(computeAssess(db).a2, undefined);
+});

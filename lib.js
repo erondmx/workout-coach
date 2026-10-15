@@ -61,7 +61,7 @@ export function rollover(db, today) {
     });
     db.history = db.history.slice(-60);
   }
-  db.progress = { date: today, day: p.day, sets: {}, setReps: {}, note: '' };
+  db.progress = { date: today, day: p.day, sets: {}, setReps: {}, swaps: {}, note: '' };
   return true;
 }
 
@@ -209,11 +209,56 @@ export function computeHints(db) {
 // Avaliação do treino de hoje, por exercício, para mostrar na tela.
 export function computeAssess(db) {
   const out = {};
-  for (const day of Object.values(db.plan)) {
+  for (const day of Object.values(applySwaps(db.plan, db.progress.swaps))) {
     for (const ex of day.exercises) {
       const a = assessSets(ex, db.progress.setReps?.[ex.id], db.progress.sets?.[ex.id]);
       if (a) out[ex.id] = a;
     }
   }
   return out;
+}
+
+// ---------- fotos e substituições do dia ----------
+const IMG_RE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+export const MAX_IMAGES = 4;
+export const MAX_IMAGE_CHARS = 2_500_000; // ~1,8 MB por foto (o cliente já reduz para ~1024 px)
+
+// Valida as fotos enviadas ao coach. Retorna a lista limpa ou lança Error.
+export function sanitizeImages(images) {
+  if (images == null) return [];
+  if (!Array.isArray(images) || images.length > MAX_IMAGES) throw new Error(`envie no máximo ${MAX_IMAGES} fotos`);
+  return images.map((u) => {
+    if (typeof u !== 'string' || u.length > MAX_IMAGE_CHARS || !IMG_RE.test(u)) throw new Error('foto inválida ou grande demais');
+    return u;
+  });
+}
+
+// Troca só por hoje: o exercício vira um "temporário" com id próprio (sufixo "s"),
+// para carga e reps do outro aparelho não se misturarem ao histórico do original.
+export const swapId = (id) => `${id}s`;
+
+export function applySwaps(plan, swaps) {
+  if (!swaps || !Object.keys(swaps).length) return plan;
+  const out = {};
+  for (const [d, day] of Object.entries(plan)) {
+    out[d] = {
+      ...day,
+      exercises: day.exercises.map((ex) => {
+        const s = swaps[ex.id];
+        if (!s) return ex;
+        const { equip: _e, ...rest } = ex;
+        return { ...rest, id: swapId(ex.id), name: s.name, ...(s.equip ? { equip: s.equip } : {}), swappedFrom: ex.name };
+      }),
+    };
+  }
+  return out;
+}
+
+export function sanitizeSwap(plan, input) {
+  const id = String(input?.exercise_id || '').toLowerCase();
+  const exists = Object.values(plan).some((d) => d.exercises.some((e) => e.id === id && !e.isCardio));
+  if (!exists) throw new Error(`exercício não encontrado: ${input?.exercise_id}`);
+  const name = String(input?.name || '').trim().slice(0, 120);
+  if (!name) throw new Error('nome vazio');
+  return { id, swap: { name, equip: EQUIPS.includes(input?.equip) ? input.equip : undefined, reason: String(input?.reason || '').slice(0, 200) } };
 }

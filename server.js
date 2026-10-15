@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPlan } from './defaultPlan.js';
 import { askCoach } from './coach.js';
-import { DAYS, checkToken, computeAssess, computeHints, makeToken, rollover, safeEqual, todayStr } from './lib.js';
+import { DAYS, applySwaps, checkToken, computeAssess, computeHints, makeToken, rollover, safeEqual, sanitizeImages, swapId, todayStr } from './lib.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -38,7 +38,7 @@ function freshDb() {
     plan: structuredClone(defaultPlan),
     planHistory: [],
     weights: {},
-    progress: { date: todayStr(TZ), day: 'A', sets: {}, setReps: {}, note: '' },
+    progress: { date: todayStr(TZ), day: 'A', sets: {}, setReps: {}, swaps: {}, note: '' },
     history: [],
     chat: [],
   };
@@ -61,7 +61,8 @@ function save() {
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '100kb' }));
+const jsonSmall = express.json({ limit: '100kb' });
+app.use((req, res, next) => (req.path === '/api/coach' ? next() : jsonSmall(req, res, next)));
 app.use((req, res, next) => {
   res.set({
     'X-Content-Type-Options': 'nosniff',
@@ -113,8 +114,9 @@ function auth(req, res, next) {
 function view() {
   if (rollover(db, todayStr(TZ))) save();
   db.progress.setReps ??= {};
+  db.progress.swaps ??= {};
   return {
-    plan: db.plan,
+    plan: applySwaps(db.plan, db.progress.swaps),
     weights: db.weights,
     progress: db.progress,
     hints: computeHints(db),
@@ -173,19 +175,27 @@ app.post('/api/reset-day', auth, (req, res) => {
   view();
   db.progress.sets = {};
   db.progress.setReps = {};
+  db.progress.swaps = {};
   save();
   res.json(view());
 });
 
 let coachBusy = false;
-app.post('/api/coach', auth, async (req, res) => {
-  const text = String(req.body?.message ?? '').trim().slice(0, 2000);
+app.post('/api/coach', auth, express.json({ limit: '12mb' }), async (req, res) => {
+  let images;
+  try {
+    images = sanitizeImages(req.body?.images);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const text = String(req.body?.message ?? '').trim().slice(0, 2000) || (images.length ? 'Veja as fotos.' : '');
   if (!text) return res.status(400).json({ error: 'Mensagem vazia' });
   if (coachBusy) return res.status(429).json({ error: 'O coach ainda está respondendo.' });
   coachBusy = true;
   try {
     view();
-    const { reply, changes } = await askCoach(db, text);
+    const { reply, changes, swaps } = await askCoach(db, text, images);
+    for (const s of swaps) db.progress.swaps[s.id] = s.swap;
     if (changes.length) {
       db.planHistory.push({ at: new Date().toISOString(), plan: structuredClone(db.plan) });
       db.planHistory = db.planHistory.slice(-10);
@@ -193,16 +203,20 @@ app.post('/api/coach', auth, async (req, res) => {
         db.plan[c.day] = c.plan;
         // remove progresso de séries de exercícios que não existem mais
         const ids = new Set(Object.values(db.plan).flatMap((d) => d.exercises.map((e) => e.id)));
+        for (const id of Object.keys(db.progress.swaps)) {
+          if (ids.has(id)) ids.add(swapId(id));
+          else delete db.progress.swaps[id];
+        }
         for (const bag of [db.progress.sets, db.progress.setReps]) {
           for (const id of Object.keys(bag)) if (!ids.has(id)) delete bag[id];
         }
       }
     }
-    db.chat.push({ role: 'user', text });
-    db.chat.push({ role: 'assistant', text: reply, changed: changes.map((c) => c.day) });
+    db.chat.push({ role: 'user', text, photos: images.length });
+    db.chat.push({ role: 'assistant', text: reply, changed: changes.map((c) => c.day), swapped: swaps.map((x) => x.swap.name) });
     db.chat = db.chat.slice(-60);
     save();
-    res.json({ reply, changed: changes.map((c) => c.day), state: view() });
+    res.json({ reply, changed: changes.map((c) => c.day), swapped: swaps.length, state: view() });
   } catch (err) {
     console.error('coach error:', err.message);
     const status = err.status === 503 ? 503 : 502;
