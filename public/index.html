@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>FitBurn Coach</title>
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="FitBurn">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/icon-180.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background-color:#0f172a; color:#f8fafc; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+        .set-btn.completed { background-color:#10b981; border-color:#10b981; color:#fff; }
+        .tab-btn.active { background-color:#f97316; color:#fff; border-color:#f97316; }
+        .safe-top { padding-top: max(1.25rem, env(safe-area-inset-top)); }
+        .safe-bottom { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+        input, textarea { font-size:16px; } /* evita zoom automático no iOS */
+        .bubble { white-space:pre-wrap; word-break:break-word; }
+    </style>
+</head>
+<body class="max-w-md mx-auto min-h-screen bg-slate-900">
+
+<!-- Login -->
+<div id="login" class="hidden fixed inset-0 z-50 bg-slate-900 flex items-center justify-center p-6">
+    <form id="login-form" class="w-full max-w-xs space-y-3">
+        <h1 class="text-2xl font-bold text-orange-500 text-center"><i class="fa-solid fa-fire-flame-curved"></i> FitBurn Coach</h1>
+        <input id="login-pass" type="password" autocomplete="current-password" placeholder="Senha"
+               class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:border-orange-500">
+        <p id="login-err" class="text-sm text-red-400 min-h-[1.25rem]"></p>
+        <button class="w-full bg-orange-500 hover:bg-orange-600 font-bold rounded-xl py-3">Entrar</button>
+    </form>
+</div>
+
+<!-- Header -->
+<header class="safe-top px-5 pb-4 bg-slate-800 border-b border-slate-700 sticky top-0 z-20">
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-xl font-bold text-orange-500 flex items-center gap-2">
+                <i class="fa-solid fa-fire-flame-curved"></i> FitBurn Coach
+            </h1>
+            <p class="text-xs text-slate-400">Emagrecimento &amp; Definição</p>
+        </div>
+        <div class="flex gap-2">
+            <button id="coach-open" class="text-xs bg-orange-500 hover:bg-orange-600 transition px-3 py-1.5 rounded-lg text-white font-semibold flex items-center gap-1">
+                <i class="fa-solid fa-comment-dots"></i> Coach
+            </button>
+            <button id="reset-btn" class="text-xs bg-slate-700 hover:bg-red-600 transition px-3 py-1.5 rounded-lg text-slate-300" aria-label="Resetar dia">
+                <i class="fa-solid fa-rotate-right"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <div class="flex justify-between text-xs mb-1">
+            <span class="text-slate-400">Progresso do Treino</span>
+            <span id="progress-text" class="font-bold text-emerald-400">0%</span>
+        </div>
+        <div class="w-full bg-slate-700 rounded-full h-2.5">
+            <div id="progress-bar" class="bg-emerald-500 h-2.5 rounded-full transition-all duration-300" style="width:0%"></div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-2 mt-4">
+        <button data-day="A" class="tab-btn py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia 1 (A)</button>
+        <button data-day="B" class="tab-btn py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia 2 (B)</button>
+        <button data-day="C" class="tab-btn py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia 3 (C)</button>
+    </div>
+</header>
+
+<main class="p-4 pb-40">
+    <div class="mb-4 bg-orange-500/10 border border-orange-500/30 rounded-xl p-3">
+        <h2 id="day-title" class="font-bold text-orange-400 text-sm"></h2>
+        <p id="day-desc" class="text-xs text-slate-300 mt-0.5"></p>
+    </div>
+    <div id="workout-list" class="space-y-3"></div>
+    <button id="logout-btn" class="mt-6 text-xs text-slate-500 underline mx-auto block">Sair</button>
+</main>
+
+<!-- Cronômetro -->
+<footer class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-800 border-t border-slate-700 px-3 pt-3 safe-bottom z-30 shadow-lg">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div id="timer-display" class="text-2xl font-mono font-bold text-white bg-slate-900 px-3 py-1 rounded-lg border border-slate-700 w-24 text-center">00:45</div>
+            <div class="flex flex-col gap-1">
+                <span class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Descanso</span>
+                <div class="flex gap-1">
+                    <button data-rest="45" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-slate-200">45s</button>
+                    <button data-rest="60" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-slate-200">60s</button>
+                    <button data-rest="90" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-slate-200">90s</button>
+                </div>
+            </div>
+        </div>
+        <button id="timer-btn" class="bg-orange-500 hover:bg-orange-600 text-white font-bold px-4 py-2 rounded-xl text-sm transition flex items-center gap-1 shadow-md">
+            <i class="fa-solid fa-play" id="timer-icon"></i> <span id="timer-btn-text">Iniciar</span>
+        </button>
+    </div>
+</footer>
+
+<!-- Coach -->
+<div id="coach" class="hidden fixed inset-0 z-40 bg-slate-900 max-w-md mx-auto flex flex-col">
+    <div class="safe-top px-4 pb-3 bg-slate-800 border-b border-slate-700 flex items-center justify-between">
+        <h2 class="font-bold text-orange-400"><i class="fa-solid fa-dumbbell mr-1"></i> Seu Coach</h2>
+        <div class="flex gap-3 items-center">
+            <button id="undo-btn" class="hidden text-xs text-slate-300 underline">Desfazer último ajuste</button>
+            <button id="coach-close" class="text-slate-300 text-lg px-2" aria-label="Fechar"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+    </div>
+    <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+    <form id="chat-form" class="safe-bottom px-3 pt-2 bg-slate-800 border-t border-slate-700 flex gap-2 items-end">
+        <textarea id="chat-input" rows="2" placeholder="Ex.: fiz o treino A, senti o ombro pesado no desenvolvimento..."
+                  class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 resize-none focus:outline-none focus:border-orange-500"></textarea>
+        <button id="chat-send" class="bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-4 py-3 mb-0.5" aria-label="Enviar"><i class="fa-solid fa-paper-plane"></i></button>
+    </form>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let S = { plan: {}, weights: {}, progress: { sets: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
+let day = 'A';
+
+// ---------- API ----------
+async function api(method, url, body) {
+    const res = await fetch(url, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        credentials: 'same-origin',
+    });
+    if (res.status === 401 && url !== '/api/login') { showLogin(); throw new Error('auth'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+    return data;
+}
+
+let saveTimer = null;
+function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+        api('PUT', '/api/state', { sets: S.progress.sets, weights: S.weights, day }).catch(() => {});
+    }, 400);
+}
+
+// ---------- login ----------
+function showLogin() { $('#login').classList.remove('hidden'); $('#login-pass').focus(); }
+$('#login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#login-err').textContent = '';
+    try {
+        await api('POST', '/api/login', { password: $('#login-pass').value });
+        $('#login-pass').value = '';
+        $('#login').classList.add('hidden');
+        await load();
+    } catch (err) { $('#login-err').textContent = err.message; }
+});
+$('#logout-btn').addEventListener('click', async () => { await api('POST', '/api/logout').catch(() => {}); location.reload(); });
+
+async function load() {
+    S = await api('GET', '/api/state');
+    day = S.progress.day || 'A';
+    switchDay(day);
+    renderChat();
+}
+
+// ---------- treino ----------
+function switchDay(d) {
+    day = d;
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.day === d));
+    const p = S.plan[d];
+    $('#day-title').textContent = p.title;
+    $('#day-desc').textContent = p.desc;
+    render();
+    scheduleSave();
+}
+document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => switchDay(b.dataset.day)));
+
+function restSecs(ex) { return ex.rest ? parseInt(ex.rest, 10) : 45; }
+
+function render() {
+    const list = $('#workout-list');
+    list.innerHTML = '';
+    let n = 0;
+    S.plan[day].exercises.forEach((ex) => {
+        const done = S.progress.sets[ex.id] || [];
+        const all = done.length === ex.sets;
+        let setsHtml = '';
+        if (ex.isCardio) {
+            const ok = done.includes(1);
+            setsHtml = `<button data-ex="${esc(ex.id)}" data-set="1" class="set-btn ${ok ? 'completed' : 'bg-slate-700 text-slate-300 border-slate-600'} border rounded-lg h-9 px-4 font-bold text-xs transition">${ok ? '<i class="fa-solid fa-check"></i> Feito' : 'Concluir'}</button>`;
+        } else {
+            for (let s = 1; s <= ex.sets; s++) {
+                const ok = done.includes(s);
+                setsHtml += `<button data-ex="${esc(ex.id)}" data-set="${s}" class="set-btn ${ok ? 'completed' : 'bg-slate-700 text-slate-300 border-slate-600'} border rounded-lg h-9 w-9 font-bold text-xs transition">${ok ? '<i class="fa-solid fa-check"></i>' : s + 'ª'}</button>`;
+            }
+        }
+        if (!ex.isCardio) n++;
+        const w = S.weights[ex.id];
+        const card = document.createElement('div');
+        card.className = `p-4 rounded-xl border transition ${all ? 'bg-slate-800/40 border-emerald-500/40' : 'bg-slate-800 border-slate-700'}`;
+        card.innerHTML = `
+            <div class="flex justify-between items-start gap-2">
+                <div>
+                    <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded ${ex.isCardio ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'}">${ex.isCardio ? 'Cardio / Metabólico' : 'Exercício ' + n}</span>
+                    <h3 class="font-bold text-base mt-1 ${all ? 'line-through text-slate-400' : 'text-white'}">${esc(ex.name)}</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">
+                        ${ex.isCardio ? esc(ex.reps) : `<i class="fa-solid fa-repeat mr-1"></i> ${ex.sets}x de ${esc(ex.reps)}`}
+                        ${ex.rest ? `<span class="ml-2"><i class="fa-regular fa-clock mr-1"></i>${esc(ex.rest)}</span>` : ''}
+                    </p>
+                </div>
+                ${ex.isCardio ? '' : `
+                <div class="flex flex-col items-end">
+                    <label class="text-[10px] text-slate-400 mb-0.5">Carga (kg)</label>
+                    <input type="number" inputmode="decimal" placeholder="0" value="${w ?? ''}" data-weight="${esc(ex.id)}"
+                        class="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-orange-400 focus:outline-none focus:border-orange-500">
+                </div>`}
+            </div>
+            <div class="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between">
+                <span class="text-xs text-slate-400">${ex.isCardio ? 'Status:' : 'Marcar séries:'}</span>
+                <div class="flex gap-2">${setsHtml}</div>
+            </div>`;
+        list.appendChild(card);
+    });
+    updateProgress();
+}
+
+$('#workout-list').addEventListener('click', (e) => {
+    const b = e.target.closest('.set-btn');
+    if (!b) return;
+    unlockAudio();
+    const id = b.dataset.ex, s = Number(b.dataset.set);
+    const ex = S.plan[day].exercises.find((x) => x.id === id);
+    const arr = (S.progress.sets[id] ||= []);
+    const i = arr.indexOf(s);
+    if (i > -1) arr.splice(i, 1);
+    else {
+        arr.push(s);
+        if (!ex.isCardio) { setTimer(restSecs(ex)); startTimer(); }
+    }
+    scheduleSave();
+    render();
+});
+
+$('#workout-list').addEventListener('input', (e) => {
+    const id = e.target.dataset.weight;
+    if (!id) return;
+    if (e.target.value === '') delete S.weights[id]; else S.weights[id] = Number(e.target.value);
+    scheduleSave();
+});
+
+function updateProgress() {
+    let total = 0, done = 0;
+    S.plan[day].exercises.forEach((ex) => { total += ex.sets; done += (S.progress.sets[ex.id] || []).length; });
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    $('#progress-bar').style.width = pct + '%';
+    $('#progress-text').textContent = pct + '%';
+}
+
+$('#reset-btn').addEventListener('click', async () => {
+    if (!confirm('Desmarcar todas as séries de hoje? (As cargas são mantidas)')) return;
+    S = await api('POST', '/api/reset-day');
+    render();
+});
+
+// ---------- cronômetro (baseado em horário, resiste a aba em segundo plano) ----------
+let restTotal = 45, remaining = 45, endAt = 0, tick = null, wakeLock = null, audioCtx = null;
+
+function unlockAudio() {
+    try {
+        audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch {}
+}
+function beep() {
+    try {
+        if (!audioCtx) return;
+        [0, 0.25, 0.5].forEach((t) => {
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+            const at = audioCtx.currentTime + t;
+            g.gain.setValueAtTime(0.25, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.18);
+            o.start(at); o.stop(at + 0.2);
+        });
+    } catch {}
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+}
+function showTime() {
+    const m = String(Math.floor(remaining / 60)).padStart(2, '0'), s = String(remaining % 60).padStart(2, '0');
+    const d = $('#timer-display');
+    d.textContent = `${m}:${s}`;
+    d.classList.remove('text-emerald-400', 'animate-pulse');
+}
+function setTimer(sec) { stopTimer(); restTotal = sec; remaining = sec; showTime(); }
+function startTimer() {
+    if (tick) return;
+    endAt = Date.now() + remaining * 1000;
+    $('#timer-icon').className = 'fa-solid fa-pause';
+    $('#timer-btn-text').textContent = 'Pausar';
+    if (navigator.wakeLock) navigator.wakeLock.request('screen').then((l) => (wakeLock = l)).catch(() => {});
+    tick = setInterval(() => {
+        remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+        showTime();
+        if (remaining <= 0) {
+            stopTimer(); remaining = restTotal; beep();
+            const d = $('#timer-display'); d.textContent = 'BORA!'; d.classList.add('text-emerald-400', 'animate-pulse');
+        }
+    }, 250);
+}
+function stopTimer() {
+    clearInterval(tick); tick = null;
+    $('#timer-icon').className = 'fa-solid fa-play';
+    $('#timer-btn-text').textContent = 'Iniciar';
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+$('#timer-btn').addEventListener('click', () => { unlockAudio(); if (tick) { remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000)); stopTimer(); showTime(); } else { if (remaining <= 0) remaining = restTotal; showTime(); startTimer(); } });
+document.querySelectorAll('[data-rest]').forEach((b) => b.addEventListener('click', () => setTimer(Number(b.dataset.rest))));
+
+// ---------- coach ----------
+function renderChat() {
+    const box = $('#chat');
+    if (!S.chat.length) {
+        box.innerHTML = `<div class="text-sm text-slate-400 text-center mt-6 px-4">Conte o que você fez, o que sentiu ou o que não deu para fazer.<br>O coach ajusta seu treino automaticamente.${S.coachEnabled ? '' : '<br><br><span class="text-red-400">Coach desativado: falta ANTHROPIC_API_KEY no servidor.</span>'}</div>`;
+    } else {
+        box.innerHTML = S.chat.map((m) => `
+            <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
+                <div class="bubble max-w-[85%] rounded-2xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-orange-500 text-white' : 'bg-slate-800 border border-slate-700 text-slate-100'}">${esc(m.text)}${m.changed && m.changed.length ? `<div class="mt-1 text-[11px] text-emerald-400"><i class="fa-solid fa-wand-magic-sparkles"></i> Treino ${m.changed.join(', ')} atualizado</div>` : ''}</div>
+            </div>`).join('');
+    }
+    $('#undo-btn').classList.toggle('hidden', !S.canUndo);
+    box.scrollTop = box.scrollHeight;
+}
+$('#coach-open').addEventListener('click', () => { $('#coach').classList.remove('hidden'); renderChat(); });
+$('#coach-close').addEventListener('click', () => $('#coach').classList.add('hidden'));
+
+$('#chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = $('#chat-input'), text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    S.chat.push({ role: 'user', text });
+    S.chat.push({ role: 'assistant', text: '…' });
+    renderChat();
+    $('#chat-send').disabled = true;
+    try {
+        await api('PUT', '/api/state', { sets: S.progress.sets, weights: S.weights, day }); // coach vê o que você acabou de marcar
+        const r = await api('POST', '/api/coach', { message: text });
+        S = r.state;
+        if (r.changed.length) day = r.changed[0];
+        switchDay(day);
+    } catch (err) {
+        S.chat.pop();
+        S.chat.push({ role: 'assistant', text: `⚠️ ${err.message}` });
+    } finally {
+        $('#chat-send').disabled = false;
+        renderChat();
+    }
+});
+$('#undo-btn').addEventListener('click', async () => {
+    if (!confirm('Desfazer o último ajuste do coach?')) return;
+    S = await api('POST', '/api/plan/undo');
+    switchDay(day);
+    renderChat();
+});
+
+// ---------- init ----------
+load().catch(() => {});
+</script>
+</body>
+</html>

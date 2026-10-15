@@ -1,0 +1,12 @@
+services:
+  workout:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - workout_data:/data
+    # Sem proxy reverso na rede Docker? Descomente para expor só no localhost da VPS:
+    # ports: ["127.0.0.1:3100:3000"]
+    # Se usa Traefik/Caddy/nginx em outra rede Docker, ligue o serviço a ela (ver README).
+volumes:
+  workout_data:
