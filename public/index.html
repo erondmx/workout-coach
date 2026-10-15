@@ -324,7 +324,7 @@ document.querySelectorAll('[data-rest]').forEach((b) => b.addEventListener('clic
 function renderChat() {
     const box = $('#chat');
     if (!S.chat.length) {
-        box.innerHTML = `<div class="text-sm text-slate-400 text-center mt-6 px-4">Conte o que você fez, o que sentiu ou o que não deu para fazer.<br>O coach ajusta seu treino automaticamente.${S.coachEnabled ? '' : '<br><br><span class="text-red-400">Coach desativado: falta ANTHROPIC_API_KEY no servidor.</span>'}</div>`;
+        box.innerHTML = `<div class="text-sm text-slate-400 text-center mt-6 px-4">Conte o que você fez, o que sentiu ou o que não deu para fazer.<br>O coach ajusta seu treino automaticamente.${S.coachEnabled ? '' : '<br><br><span class="text-red-400">Coach desativado: falta OPENROUTER_API_KEY no servidor.</span>'}</div>`;
     } else {
         box.innerHTML = S.chat.map((m) => `
             <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">

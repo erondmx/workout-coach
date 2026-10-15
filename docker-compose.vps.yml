@@ -1,12 +1,12 @@
 # Compose de produção para a VPS Hostinger (Traefik já roda em modo host e emite o HTTPS).
-# Variáveis APP_PASSWORD e ANTHROPIC_API_KEY são definidas no projeto Docker (hPanel), nunca no repo.
+# Variáveis APP_PASSWORD e OPENROUTER_API_KEY são definidas no projeto Docker (hPanel), nunca no repo.
 services:
   workout:
     build: https://github.com/erondmx/workout-coach.git#main
     restart: unless-stopped
     environment:
       - APP_PASSWORD=${APP_PASSWORD}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - TZ_APP=America/Sao_Paulo
     volumes:
       - workout_data:/data

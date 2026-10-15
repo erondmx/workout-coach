@@ -118,7 +118,7 @@ function view() {
     progress: db.progress,
     chat: db.chat.slice(-40),
     canUndo: db.planHistory.length > 0,
-    coachEnabled: Boolean(process.env.ANTHROPIC_API_KEY),
+    coachEnabled: Boolean(process.env.OPENROUTER_API_KEY),
   };
 }
 
