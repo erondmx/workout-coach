@@ -39,3 +39,25 @@ Obs.: iOS não vibra pelo navegador; o fim do descanso toca um beep (toque em qu
 O modelo responde em texto e pode chamar a ferramenta `update_day`; o servidor valida (ids, séries, descanso)
 e só então grava. O plano anterior fica salvo e o botão "Desfazer último ajuste" restaura.
 Via OpenRouter, modelo padrão `anthropic/claude-sonnet-5.5` com raciocínio baixo (`COACH_MODEL`, `COACH_REASONING`).
+
+## Regra de progressão de carga (e a base)
+
+O app avalia as **reps feitas em cada série** contra a faixa prescrita (ex.: 12–15) e sugere a carga do próximo treino:
+
+| Pior série do treino | Sugestão |
+|---|---|
+| Todas as séries no topo da faixa (ou acima) | subir **um degrau** de carga |
+| Dentro da faixa | manter e buscar o topo |
+| Abaixo da faixa | manter; 2 treinos seguidos → descer um degrau |
+| Abaixo de 70% do mínimo da faixa (ex.: 4 reps para 12) | descer um degrau já |
+
+Degrau = salto real da academia: máquina/polia/barra 5 kg; halteres 1 kg (< 10 kg) ou 2 kg.
+
+**O que a literatura sustenta** (e o que não):
+- *Dupla progressão* (manter a carga e subir reps até o topo da faixa em todas as séries, então subir a carga) é uma convenção de treinadores, sem estudo que valide esse protocolo específico. Plotkin et al. (2022, PeerJ), 8 semanas em treinados: progredir por carga **ou** por repetições foram estratégias viáveis, sem diferença relevante de hipertrofia. https://peerj.com/articles/14142
+- ACSM (2009): aumentar a carga em 2–10% quando o praticante consegue 1–2 reps acima do alvo. Nosso "degrau" é um salto discreto da máquina, não uma porcentagem. https://www.sportgeneeskunde.com/wp-content/uploads/ACSM-Position-Stand-Progression-Models-in-Resistance-Training-for-Healthy-Adults.pdf
+- Reps feitas vs. alvo como medida de esforço: a escala RIR (reps em reserva) de Zourdos et al. (2016) e sua aplicação por Helms et al. (2016) usam exatamente a ideia de ajustar a carga pelo quão perto da falha a série ficou. https://pubmed.ncbi.nlm.nih.gov/30747900/ · https://openrepository.aut.ac.nz/items/92cefeac-7c32-44f1-bfbc-f48f4a5dd8cf/full
+- Proximidade da falha: meta-análise de Refalo et al. (2023) não achou vantagem relevante de treinar até a falha vs. perto dela para hipertrofia; as séries precisam ser desafiadoras, não necessariamente extremas. https://pmc.ncbi.nlm.nih.gov/articles/PMC9935748
+- Estimar RIR de cabeça é impreciso (mais ainda em séries longas), o que reforça usar as reps registradas em vez de "achismo".
+
+**Limites honestos:** os cortes numéricos (70% do mínimo, 2 treinos seguidos, 1 degrau) são decisões de engenharia coerentes com esses princípios, **não** limiares validados em estudo. Ajuste em `lib.js` (`assessSets`/`suggest`) se achar agressivo ou conservador demais. O app não substitui um profissional de educação física.

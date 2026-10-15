@@ -56,13 +56,12 @@ export function rollover(db, today) {
       day: p.day,
       sets: p.sets,
       weights: { ...db.weights },
-      reps: { ...(p.reps || {}) },
-      effort: { ...(p.effort || {}) },
+      setReps: structuredClone(p.setReps || {}),
       note: p.note || '',
     });
     db.history = db.history.slice(-60);
   }
-  db.progress = { date: today, day: p.day, sets: {}, reps: {}, effort: {}, note: '' };
+  db.progress = { date: today, day: p.day, sets: {}, setReps: {}, note: '' };
   return true;
 }
 
@@ -88,9 +87,6 @@ export function safeEqual(a, b) {
   const hb = crypto.createHash('sha256').update(String(b)).digest();
   return crypto.timingSafeEqual(ha, hb);
 }
-
-export const EFFORTS = ['easy', 'ok', 'hard'];
-const EFFORT_PT = { easy: 'fácil', ok: 'na medida', hard: 'pesado' };
 
 // "12 a 15 reps" -> [12, 15]; "12 reps" -> [12, 12]; sem número -> null.
 export function parseRepRange(reps) {
@@ -118,57 +114,85 @@ export function stepFor(ex, w) {
 
 const fmtKg = (n) => `${String(Math.round(n * 10) / 10).replace('.', ',')} kg`;
 
-// Dica de carga para o PRÓXIMO treino de um exercício, a partir das sessões arquivadas.
-// Regras (dupla progressão):
-//  - completou todas as séries + esforço "fácil" (e reps no topo da faixa, se registradas) -> subir carga
-//  - completou + "na medida" + reps no topo em 2 treinos seguidos com a mesma carga -> subir carga
-//  - completou mas abaixo do topo da faixa -> manter e buscar o topo
-//  - "pesado" ou séries incompletas -> manter; 2 vezes seguidas -> descer um degrau da máquina/halter
+
+const NOTCH = 1; // um degrau de carga por vez
+
+// Avalia as reps feitas HOJE (ou numa sessão) contra a faixa prescrita.
+// repsMap: { "1": 12, "2": 11, ... } (reps por série); done: séries marcadas.
+// Níveis: very_heavy | heavy | in_range | top | easy | null (sem dados)
+export function assessSets(ex, repsMap, done) {
+  const range = parseRepRange(ex.reps);
+  if (!range || ex.isCardio) return null;
+  const [lo, hi] = range;
+  const logged = (done || [])
+    .map((s) => ({ s, r: repsMap?.[s] }))
+    .filter((x) => x.r != null && Number.isFinite(Number(x.r)))
+    .sort((a, b) => a.s - b.s)
+    .map((x) => Number(x.r));
+  if (!logged.length) return null;
+  const worst = Math.min(...logged);
+  const first = logged[0];
+  const last = logged.at(-1);
+  const drop = first - last;
+  const dropNote = drop >= 4 ? ` Queda de ${drop} reps entre a 1ª e a última série: carga pesada ou descanso curto.` : '';
+  const complete = (done || []).length >= ex.sets && logged.length >= ex.sets;
+  const base = { worst, lo, hi };
+  if (worst < lo * 0.7) {
+    return { ...base, level: 'very_heavy', text: `Pior série: ${worst} reps (previsto ${lo}–${hi}). Carga pesada demais.${dropNote}` };
+  }
+  if (worst < lo) {
+    return { ...base, level: 'heavy', text: `Pior série: ${worst} reps, abaixo da faixa (${lo}–${hi}). Carga no limite.${dropNote}` };
+  }
+  if (worst < hi || !complete) {
+    return { ...base, level: 'in_range', text: `Pior série: ${worst} reps, dentro da faixa. Busque ${hi} em todas as séries.${dropNote}` };
+  }
+  if (worst >= hi + 2) {
+    return { ...base, level: 'easy', text: `Pior série: ${worst} reps, ${worst - hi} acima do topo. Carga leve.${dropNote}` };
+  }
+  return { ...base, level: 'top', text: `Todas as séries no topo da faixa (${hi}+). Pronto para mais carga.${dropNote}` };
+}
+
+// Dica de carga para o PRÓXIMO treino, a partir das sessões arquivadas (dupla progressão):
+//  - todas as séries no topo da faixa (ou acima) -> subir um degrau
+//  - pior série bem abaixo da faixa (< 70% do mínimo) -> descer um degrau já
+//  - pior série abaixo da faixa -> manter; 2 treinos seguidos assim -> descer um degrau
+//  - dentro da faixa -> manter e buscar o topo
 export function suggest(ex, history) {
   if (ex.isCardio) return null;
   const range = parseRepRange(ex.reps);
   if (!range) return null;
-  const top = range[1];
   const sessions = history
     .filter((h) => (h.sets?.[ex.id] || []).length > 0)
     .slice(-2)
     .map((h) => ({
-      done: h.sets[ex.id].length,
       w: Number(h.weights?.[ex.id]) || 0,
-      reps: h.reps?.[ex.id] != null ? Number(h.reps[ex.id]) : null,
-      effort: h.effort?.[ex.id] || null,
+      done: h.sets[ex.id].length,
+      a: assessSets(ex, h.setReps?.[ex.id], h.sets[ex.id]),
     }));
   const last = sessions.at(-1);
-  if (!last || !(last.w > 0)) return null;
+  if (!last || !(last.w > 0) || !last.a) return null;
 
-  const complete = (s) => s.done >= ex.sets;
-  const hitTop = (s) => s.reps != null && s.reps >= top;
   const w = last.w;
-  const inc = stepFor(ex, w);
-  const recap = `Última vez: ${last.done}/${ex.sets} séries com ${fmtKg(w)}${last.reps != null ? `, ${last.reps} reps` : ''}${last.effort ? `, ${EFFORT_PT[last.effort]}` : ''}`;
+  const step = stepFor(ex, w) * NOTCH;
+  const a = last.a;
+  const recap = `Última vez: ${last.done}/${ex.sets} séries com ${fmtKg(w)}. ${a.text}`;
 
-  const struggled = (s) => s.effort === 'hard' || !complete(s);
-  if (struggled(last)) {
+  if (a.level === 'very_heavy') {
+    const to = Math.max(step, w - step);
+    return { type: 'down', to, text: `${recap} Desça para ${fmtKg(to)}.` };
+  }
+  if (a.level === 'heavy') {
     const prev = sessions.length === 2 ? sessions[0] : null;
-    if (prev && struggled(prev) && prev.w >= w) {
-      const to = Math.max(inc, w - inc);
-      return { type: 'down', to, text: `${recap}. Dificuldade 2 treinos seguidos: desça um degrau para ${fmtKg(to)} e capriche na técnica.` };
+    if (prev?.a && ['heavy', 'very_heavy'].includes(prev.a.level) && prev.w >= w) {
+      const to = Math.max(step, w - step);
+      return { type: 'down', to, text: `${recap} Segundo treino seguido abaixo da faixa: desça para ${fmtKg(to)}.` };
     }
-    return { type: 'hold', text: `${recap}. Mantenha ${fmtKg(w)} e busque ${ex.sets}×${top} reps.` };
+    return { type: 'hold', text: `${recap} Mantenha ${fmtKg(w)} e recupere as reps.` };
   }
-
-  const effortUnknown = last.effort == null;
-  const easyOk = last.effort === 'easy' && (last.reps == null || hitTop(last));
-  const prev = sessions.length === 2 ? sessions[0] : null;
-  const steady = last.effort === 'ok' && hitTop(last) && prev && complete(prev) && hitTop(prev) && prev.w === w && prev.effort !== 'hard';
-  if (easyOk || steady) {
-    return { type: 'up', to: w + inc, text: `${recap}. Tudo certo: suba para ${fmtKg(w + inc)}.` };
+  if (a.level === 'in_range') {
+    return { type: 'reps', text: `${recap} Mantenha ${fmtKg(w)}.` };
   }
-  if (effortUnknown && !hitTop(last)) return null; // sem dados suficientes
-  if (!hitTop(last) && last.reps != null) {
-    return { type: 'reps', text: `${recap}. Mantenha ${fmtKg(w)} até chegar a ${top} reps em todas as séries.` };
-  }
-  return { type: 'hold', text: `${recap}. Repita ${fmtKg(w)}; ao sentir fácil, suba ${fmtKg(inc)}.` };
+  return { type: 'up', to: w + step, text: `${recap} Suba para ${fmtKg(w + step)}.` };
 }
 
 export function computeHints(db) {
@@ -177,6 +201,18 @@ export function computeHints(db) {
     for (const ex of day.exercises) {
       const h = suggest(ex, db.history);
       if (h) out[ex.id] = h;
+    }
+  }
+  return out;
+}
+
+// Avaliação do treino de hoje, por exercício, para mostrar na tela.
+export function computeAssess(db) {
+  const out = {};
+  for (const day of Object.values(db.plan)) {
+    for (const ex of day.exercises) {
+      const a = assessSets(ex, db.progress.setReps?.[ex.id], db.progress.sets?.[ex.id]);
+      if (a) out[ex.id] = a;
     }
   }
   return out;

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPlan } from './defaultPlan.js';
 import { askCoach } from './coach.js';
-import { DAYS, EFFORTS, checkToken, computeHints, makeToken, rollover, safeEqual, todayStr } from './lib.js';
+import { DAYS, checkToken, computeAssess, computeHints, makeToken, rollover, safeEqual, todayStr } from './lib.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -38,7 +38,7 @@ function freshDb() {
     plan: structuredClone(defaultPlan),
     planHistory: [],
     weights: {},
-    progress: { date: todayStr(TZ), day: 'A', sets: {}, reps: {}, effort: {}, note: '' },
+    progress: { date: todayStr(TZ), day: 'A', sets: {}, setReps: {}, note: '' },
     history: [],
     chat: [],
   };
@@ -112,13 +112,13 @@ function auth(req, res, next) {
 
 function view() {
   if (rollover(db, todayStr(TZ))) save();
-  db.progress.reps ??= {};
-  db.progress.effort ??= {};
+  db.progress.setReps ??= {};
   return {
     plan: db.plan,
     weights: db.weights,
     progress: db.progress,
     hints: computeHints(db),
+    assess: computeAssess(db),
     chat: db.chat.slice(-40),
     canUndo: db.planHistory.length > 0,
     coachEnabled: Boolean(process.env.OPENROUTER_API_KEY),
@@ -131,7 +131,7 @@ app.get('/api/state', auth, (req, res) => res.json(view()));
 
 app.put('/api/state', auth, (req, res) => {
   view(); // garante rollover antes de gravar
-  const { sets, weights, reps, effort, day } = req.body || {};
+  const { sets, weights, setReps, day } = req.body || {};
   if (sets && typeof sets === 'object') {
     const clean = {};
     for (const [id, arr] of Object.entries(sets)) {
@@ -150,29 +150,29 @@ app.put('/api/state', auth, (req, res) => {
     }
     db.weights = clean;
   }
-  if (reps && typeof reps === 'object') {
+  if (setReps && typeof setReps === 'object') {
     const clean = {};
-    for (const [id, r] of Object.entries(reps)) {
-      const n = Number(r);
-      if (ID_RE.test(id) && r !== '' && r != null && Number.isInteger(n) && n >= 0 && n <= 200) clean[id] = n;
+    for (const [id, bySet] of Object.entries(setReps)) {
+      if (!ID_RE.test(id) || !bySet || typeof bySet !== 'object') continue;
+      for (const [k, r] of Object.entries(bySet)) {
+        const set = Number(k);
+        const n = Number(r);
+        if (Number.isInteger(set) && set >= 1 && set <= 10 && r !== '' && r != null && Number.isInteger(n) && n >= 0 && n <= 200) {
+          (clean[id] ||= {})[set] = n;
+        }
+      }
     }
-    db.progress.reps = clean;
-  }
-  if (effort && typeof effort === 'object') {
-    const clean = {};
-    for (const [id, e] of Object.entries(effort)) if (ID_RE.test(id) && EFFORTS.includes(e)) clean[id] = e;
-    db.progress.effort = clean;
+    db.progress.setReps = clean;
   }
   if (DAYS.includes(day)) db.progress.day = day;
   save();
-  res.json({ ok: true });
+  res.json({ ok: true, assess: computeAssess(db) });
 });
 
 app.post('/api/reset-day', auth, (req, res) => {
   view();
   db.progress.sets = {};
-  db.progress.reps = {};
-  db.progress.effort = {};
+  db.progress.setReps = {};
   save();
   res.json(view());
 });
@@ -193,7 +193,7 @@ app.post('/api/coach', auth, async (req, res) => {
         db.plan[c.day] = c.plan;
         // remove progresso de séries de exercícios que não existem mais
         const ids = new Set(Object.values(db.plan).flatMap((d) => d.exercises.map((e) => e.id)));
-        for (const bag of [db.progress.sets, db.progress.reps, db.progress.effort]) {
+        for (const bag of [db.progress.sets, db.progress.setReps]) {
           for (const id of Object.keys(bag)) if (!ids.has(id)) delete bag[id];
         }
       }

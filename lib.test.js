@@ -34,7 +34,7 @@ test('token expira e rejeita adulteração', () => {
   assert.equal(checkToken('s', 'lixo'), false);
 });
 
-import { parseRepRange, suggest } from './lib.js';
+import { parseRepRange, suggest, assessSets, equipOf } from './lib.js';
 
 test('parseRepRange', () => {
   assert.deepEqual(parseRepRange('12 a 15 reps'), [12, 15]);
@@ -43,45 +43,68 @@ test('parseRepRange', () => {
   assert.equal(parseRepRange('Prancha'), null);
 });
 
-const EX = { id: 'a2', sets: 4, reps: '12 a 15 reps' };
-const sess = (o = {}) => ({ sets: { a2: [1, 2, 3, 4] }, weights: { a2: 30 }, reps: { a2: 15 }, effort: { a2: 'easy' }, ...o });
+const EX = { id: 'a2', name: 'Leg Press 45º', sets: 4, reps: '12 a 15 reps' }; // máquina: salto de 5 kg
+const all = [1, 2, 3, 4];
+const sess = (repsList, w = 30, done = all) => ({
+  sets: { a2: done },
+  weights: { a2: w },
+  setReps: { a2: Object.fromEntries(repsList.map((r, i) => [i + 1, r])) },
+});
 
-test('suggest: fácil + completo + topo -> sobe carga', () => {
-  const r = suggest(EX, [sess()]);
+test('assessSets: exemplo do usuário (12 previstas, 4 na 3ª série) = pesado demais', () => {
+  const ex = { id: 'x', sets: 4, reps: '12 reps' };
+  const a = assessSets(ex, { 1: 12, 2: 10, 3: 4, 4: 4 }, all);
+  assert.equal(a.level, 'very_heavy');
+  assert.match(a.text, /Queda de 8 reps/);
+});
+test('assessSets: níveis', () => {
+  assert.equal(assessSets(EX, { 1: 15, 2: 15, 3: 15, 4: 15 }, all).level, 'top');
+  assert.equal(assessSets(EX, { 1: 17, 2: 17, 3: 17, 4: 17 }, all).level, 'easy');
+  assert.equal(assessSets(EX, { 1: 14, 2: 13, 3: 12, 4: 12 }, all).level, 'in_range');
+  assert.equal(assessSets(EX, { 1: 14, 2: 12, 3: 10, 4: 10 }, all).level, 'heavy');
+  assert.equal(assessSets(EX, {}, all), null);
+  assert.equal(assessSets({ ...EX, isCardio: true }, { 1: 5 }, [1]), null);
+});
+test('assessSets: todas no topo mas com série faltando não conta como topo', () => {
+  assert.equal(assessSets(EX, { 1: 15, 2: 15 }, [1, 2]).level, 'in_range');
+});
+
+test('suggest: todas as séries no topo -> sobe um degrau da máquina (5 kg)', () => {
+  const r = suggest(EX, [sess([15, 15, 15, 15])]);
   assert.equal(r.type, 'up');
-  assert.equal(r.to, 35); // máquina: salto de 5 kg
+  assert.equal(r.to, 35);
 });
-test('suggest: pesado -> mantém; 2x seguidas -> desce um degrau', () => {
-  const hard = sess({ effort: { a2: 'hard' } });
-  assert.equal(suggest(EX, [hard]).type, 'hold');
-  const r = suggest(EX, [hard, hard]);
+test('suggest: muito pesado -> desce um degrau já no primeiro treino', () => {
+  const r = suggest(EX, [sess([12, 8, 4, 4])]);
   assert.equal(r.type, 'down');
-  assert.equal(r.to, 25); // um degrau abaixo
+  assert.equal(r.to, 25);
 });
-test('suggest: séries incompletas -> mantém', () => {
-  assert.equal(suggest(EX, [sess({ sets: { a2: [1, 2] } })]).type, 'hold');
+test('suggest: abaixo da faixa -> mantém; 2 seguidas -> desce', () => {
+  const heavy = sess([13, 11, 10, 10]);
+  assert.equal(suggest(EX, [heavy]).type, 'hold');
+  assert.equal(suggest(EX, [heavy, heavy]).type, 'down');
 });
-test('suggest: na medida no topo só sobe após 2 treinos iguais', () => {
-  const ok = sess({ effort: { a2: 'ok' } });
-  assert.notEqual(suggest(EX, [ok]).type, 'up');
-  assert.equal(suggest(EX, [ok, ok]).type, 'up');
+test('suggest: dentro da faixa -> foco em reps; sem reps/carga/cardio -> null', () => {
+  assert.equal(suggest(EX, [sess([14, 13, 12, 12])]).type, 'reps');
+  assert.equal(suggest(EX, [{ sets: { a2: all }, weights: { a2: 30 } }]), null);
+  assert.equal(suggest(EX, [sess([15, 15, 15, 15], 0)]), null);
+  assert.equal(suggest({ ...EX, isCardio: true }, [sess([15, 15, 15, 15])]), null);
 });
-test('suggest: abaixo do topo -> foco em reps; sem carga/cardio -> null', () => {
-  assert.equal(suggest(EX, [sess({ reps: { a2: 12 }, effort: { a2: 'ok' } })]).type, 'reps');
-  assert.equal(suggest(EX, [sess({ weights: {} })]), null);
-  assert.equal(suggest({ ...EX, isCardio: true }, [sess()]), null);
-});
-
 test('suggest: halteres sobem de 2 em 2 (1 em 1 abaixo de 10 kg)', () => {
   const db = { id: 'a3', name: 'Supino Inclinado com Halteres', sets: 3, reps: '12 reps' };
-  const s = (w) => ({ sets: { a3: [1, 2, 3] }, weights: { a3: w }, reps: { a3: 12 }, effort: { a3: 'easy' } });
+  const s = (w) => ({ sets: { a3: [1, 2, 3] }, weights: { a3: w }, setReps: { a3: { 1: 12, 2: 12, 3: 12 } } });
   assert.equal(suggest(db, [s(14)]).to, 16);
   assert.equal(suggest(db, [s(8)]).to, 9);
 });
-test('equipOf: infere pelo nome e respeita equip explícito', async () => {
-  const { equipOf } = await import('./lib.js');
+test('equipOf: infere pelo nome e respeita equip explícito', () => {
   assert.equal(equipOf({ name: 'Leg Press 45º' }), 'machine');
   assert.equal(equipOf({ name: 'Rosca Martelo' }), 'dumbbell');
   assert.equal(equipOf({ name: 'Agachamento Livre ou no Smith' }), 'barbell');
   assert.equal(equipOf({ name: 'Leg Press', equip: 'barbell' }), 'barbell');
+});
+test('rollover arquiva reps por série', () => {
+  const db = { weights: {}, history: [], progress: { date: '2026-10-14', day: 'A', sets: { a2: [1] }, setReps: { a2: { 1: 12 } }, note: '' } };
+  rollover(db, '2026-10-15');
+  assert.deepEqual(db.history[0].setReps, { a2: { 1: 12 } });
+  assert.deepEqual(db.progress.setReps, {});
 });
