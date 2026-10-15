@@ -80,3 +80,9 @@ Se você mudar de 30 para 35 kg na 3ª série, fica "30, 30, 35, 35". A avaliaç
 Cada exercício mostra um semáforo ao vivo (regras do app, sem LLM): verde = subir (com a carga sugerida e botão Aplicar),
 amarelo = manter, vermelho = reduzir. Subir só aparece com todas as séries no topo da faixa ou com reps 2+ acima do topo.
 O coach (LLM) recebe reps, cargas por série e o semáforo, e comenta; a decisão de carga é da regra e sua.
+
+## Anotações por exercício
+
+Cada exercício tem o link "Anotação", que abre um campo de texto (até 1000 caracteres) salvo no servidor por exercício
+(`notes` no `db.json`). A anotação vale para todos os treinos seguintes e já aparece aberta quando existe. "Excluir" apaga;
+apagar todo o texto também remove. O coach lê as anotações (dores, ajuste de banco etc.) ao conversar.

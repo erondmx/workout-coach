@@ -76,7 +76,7 @@ function context(db) {
   const recent = db.history.slice(-8);
   const hints = Object.fromEntries(Object.entries(computeHints(db)).map(([id, h]) => [id, h.text]));
   const today = { séries: db.progress.sets, repsPorSerie: db.progress.setReps || {}, cargaPorSerie: db.progress.setWeights || {}, avaliação: Object.fromEntries(Object.entries(computeAssess(db)).map(([id, a]) => [id, a.text])) };
-  return `PLANO ATUAL (JSON):\n${JSON.stringify(db.plan)}\n\nCARGAS ATUAIS (kg por id de exercício):\n${JSON.stringify(db.weights)}\n\nPROGRESSO DE HOJE (${db.progress.date}, dia ${db.progress.day}):\n${JSON.stringify(today)}\n\nÚLTIMOS TREINOS (séries feitas, cargas e reps por série, por id; a carga final do exercício é a da última série):\n${JSON.stringify(recent)}\n\nSUGESTÕES AUTOMÁTICAS DE CARGA (já exibidas ao usuário):\n${JSON.stringify(hints)}`;
+  return `PLANO ATUAL (JSON):\n${JSON.stringify(db.plan)}\n\nCARGAS ATUAIS (kg por id de exercício):\n${JSON.stringify(db.weights)}\n\nPROGRESSO DE HOJE (${db.progress.date}, dia ${db.progress.day}):\n${JSON.stringify(today)}\n\nÚLTIMOS TREINOS (séries feitas, cargas e reps por série, por id; a carga final do exercício é a da última série):\n${JSON.stringify(recent)}\n\nSUGESTÕES AUTOMÁTICAS DE CARGA (já exibidas ao usuário):\n${JSON.stringify(hints)}\n\nANOTAÇÕES DO USUÁRIO POR EXERCÍCIO (id → texto; considere dores, ajuste de banco etc.):\n${JSON.stringify(db.notes || {})}\n\nTROCAS SÓ DE HOJE (id do exercício → substituto):\n${JSON.stringify(db.progress.swaps || {})}`;
 }
 
 // Retorna { reply, changes: [{day, day_plan, reason}] }. Não altera o db.

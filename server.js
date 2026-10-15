@@ -41,6 +41,7 @@ function freshDb() {
     progress: { date: todayStr(TZ), day: 'A', sets: {}, setReps: {}, setWeights: {}, swaps: {}, note: '' },
     history: [],
     chat: [],
+    notes: {},
   };
 }
 
@@ -121,6 +122,7 @@ function view() {
     weights: db.weights,
     progress: db.progress,
     hints: computeHints(db),
+    notes: db.notes,
     assess: computeAssess(db),
     chat: db.chat.slice(-40),
     canUndo: db.planHistory.length > 0,
@@ -184,6 +186,18 @@ app.put('/api/state', auth, (req, res) => {
   if (DAYS.includes(day)) db.progress.day = day;
   save();
   res.json({ ok: true, assess: computeAssess(db) });
+});
+
+// Anotação persistente por exercício (vale para todos os treinos seguintes). Texto vazio apaga.
+app.put('/api/notes', auth, (req, res) => {
+  const id = String(req.body?.id ?? '');
+  if (!ID_RE.test(id)) return res.status(400).json({ error: 'exercício inválido' });
+  const text = String(req.body?.text ?? '').slice(0, 1000);
+  db.notes ??= {};
+  if (text.trim()) db.notes[id] = text;
+  else delete db.notes[id];
+  save();
+  res.json({ ok: true });
 });
 
 app.post('/api/reset-day', auth, (req, res) => {

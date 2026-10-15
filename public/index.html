@@ -128,7 +128,7 @@
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let S = { plan: {}, weights: {}, hints: {}, assess: {}, progress: { sets: {}, setReps: {}, setWeights: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
+let S = { plan: {}, weights: {}, hints: {}, assess: {}, notes: {}, progress: { sets: {}, setReps: {}, setWeights: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
 let day = 'A';
 
 // ---------- API ----------
@@ -249,6 +249,34 @@ function refreshAssess() {
     });
 }
 
+// ---------- anotações por exercício (persistem entre os treinos) ----------
+const openNotes = new Set(); // ids com o campo aberto nesta sessão (anotação salva sempre aparece aberta)
+function noteHtml(ex) {
+    const text = S.notes[ex.id];
+    if (!text && !openNotes.has(ex.id)) return '';
+    return `<div class="mt-3 pt-3 border-t border-slate-700/60">
+        <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-slate-400"><i class="fa-regular fa-note-sticky mr-1"></i>Anotação (fica salva para os próximos treinos)</span>
+            <button type="button" data-delnote="${esc(ex.id)}" class="text-xs text-red-300 hover:text-red-200"><i class="fa-regular fa-trash-can mr-1"></i>Excluir</button>
+        </div>
+        <textarea data-note="${esc(ex.id)}" rows="2" maxlength="1000" placeholder="Ex.: banco na posição 4, ombro estalou, usar pegada fechada..."
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-amber-400">${esc(text || '')}</textarea>
+    </div>`;
+}
+function noteBtnHtml(ex) {
+    const has = !!S.notes[ex.id];
+    return `<button type="button" data-togglenote="${esc(ex.id)}" class="text-[11px] ${has ? 'text-amber-300' : 'text-slate-400'} underline" aria-label="Anotação do exercício">
+        <i class="fa-${has ? 'solid' : 'regular'} fa-note-sticky mr-1"></i>${has ? 'Ver anotação' : 'Anotação'}</button>`;
+}
+
+let noteTimers = {};
+function saveNote(id) {
+    clearTimeout(noteTimers[id]);
+    noteTimers[id] = setTimeout(() => {
+        api('PUT', '/api/notes', { id, text: S.notes[id] || '' }).catch(() => {});
+    }, 600);
+}
+
 function render() {
     const list = $('#workout-list');
     list.innerHTML = '';
@@ -294,13 +322,37 @@ function render() {
                 <div class="flex gap-2">${setsHtml}</div>
             </div>
             ${!ex.isCardio && done.length ? feedbackHtml(ex, done) : ''}
-            ${ex.isCardio ? '' : `<button data-nofind="${esc(ex.id)}" class="mt-3 text-[11px] text-slate-400 underline"><i class="fa-solid fa-camera mr-1"></i>Não achei o aparelho</button>`}`;
+            ${noteHtml(ex)}
+            <div class="mt-3 flex items-center gap-4">
+                ${noteBtnHtml(ex)}
+                ${ex.isCardio ? '' : `<button type="button" data-nofind="${esc(ex.id)}" class="text-[11px] text-slate-400 underline"><i class="fa-solid fa-camera mr-1"></i>Não achei o aparelho</button>`}
+            </div>`;
         list.appendChild(card);
     });
     updateProgress();
 }
 
 $('#workout-list').addEventListener('click', (e) => {
+    const tn = e.target.closest('[data-togglenote]');
+    if (tn) {
+        const id = tn.dataset.togglenote;
+        if (openNotes.has(id) && !S.notes[id]) openNotes.delete(id); else openNotes.add(id);
+        render();
+        const ta = document.querySelector(`[data-note="${id}"]`);
+        if (ta) ta.focus();
+        return;
+    }
+    const dn = e.target.closest('[data-delnote]');
+    if (dn) {
+        const id = dn.dataset.delnote;
+        if (S.notes[id] && !confirm('Excluir esta anotação?')) return;
+        delete S.notes[id];
+        openNotes.delete(id);
+        clearTimeout(noteTimers[id]);
+        api('PUT', '/api/notes', { id, text: '' }).catch(() => {});
+        render();
+        return;
+    }
     const nf = e.target.closest('[data-nofind]');
     if (nf) {
         const ex = S.plan[day].exercises.find((x) => x.id === nf.dataset.nofind);
@@ -335,6 +387,13 @@ $('#workout-list').addEventListener('click', (e) => {
 });
 
 $('#workout-list').addEventListener('input', (e) => {
+    const nid = e.target.dataset.note;
+    if (nid) {
+        openNotes.add(nid);
+        if (e.target.value.trim()) S.notes[nid] = e.target.value; else delete S.notes[nid];
+        saveNote(nid);
+        return;
+    }
     const rid = e.target.dataset.setreps;
     if (rid) {
         const bag = (S.progress.setReps[rid] ||= {});
