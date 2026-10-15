@@ -128,7 +128,7 @@
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let S = { plan: {}, weights: {}, hints: {}, assess: {}, progress: { sets: {}, setReps: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
+let S = { plan: {}, weights: {}, hints: {}, assess: {}, progress: { sets: {}, setReps: {}, setWeights: {}, day: 'A' }, chat: [], canUndo: false, coachEnabled: false };
 let day = 'A';
 
 // ---------- API ----------
@@ -145,7 +145,7 @@ async function api(method, url, body) {
     return data;
 }
 
-const progressPayload = () => ({ sets: S.progress.sets, weights: S.weights, setReps: S.progress.setReps, day });
+const progressPayload = () => ({ sets: S.progress.sets, weights: S.weights, setReps: S.progress.setReps, setWeights: S.progress.setWeights, day });
 
 let saveTimer = null;
 function scheduleSave() {
@@ -206,19 +206,33 @@ function hintHtml(ex, w) {
         ${canApply ? `<button data-apply="${esc(ex.id)}" data-to="${h.to}" class="shrink-0 bg-white/10 hover:bg-white/20 rounded-md px-2 py-1 font-bold">Aplicar</button>` : ''}
     </div>`;
 }
-const LEVEL_STYLE = {
-    very_heavy: 'text-amber-300', heavy: 'text-amber-300', in_range: 'text-blue-300', top: 'text-emerald-300', easy: 'text-emerald-300',
+const kg = (n) => String(n).replace('.', ',') + ' kg';
+const SIGNAL = {
+    up: { cls: 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300', icon: 'fa-arrow-up' },
+    hold: { cls: 'bg-amber-500/10 border-amber-500/40 text-amber-300', icon: 'fa-equals' },
+    down: { cls: 'bg-red-500/10 border-red-500/50 text-red-300', icon: 'fa-arrow-down' },
 };
 function assessHtml(ex) {
     const a = S.assess && S.assess[ex.id];
-    return a ? `<span class="${LEVEL_STYLE[a.level] || 'text-slate-300'}">${esc(a.text)}</span>` : '<span class="text-slate-500">Anote as reps de cada série para o app avaliar a carga.</span>';
+    if (!a) return '<span class="text-slate-500">Anote as reps de cada série para o app avaliar a carga.</span>';
+    const sig = SIGNAL[a.action] || SIGNAL.hold;
+    let label;
+    if (a.level === 'pending') label = 'Anote as reps da nova carga';
+    else if (a.action === 'up') label = a.partial ? `Dá para subir já para ${kg(a.to)}` : `Subir para ${kg(a.to)}`;
+    else if (a.action === 'down') label = `Reduzir para ${kg(a.to)}`;
+    else label = a.weight ? `Manter ${kg(a.weight)}` : 'Manter a carga';
+    const canApply = a.to && Number(S.weights[ex.id]) !== a.to && (a.action === 'up' || a.action === 'down');
+    return `<span class="block border rounded-lg px-3 py-2 ${sig.cls}">
+        <span class="flex items-center justify-between gap-2 font-bold"><span><i class="fa-solid ${sig.icon} mr-1"></i>${esc(label)}</span>
+        ${canApply ? `<button type="button" data-apply="${esc(ex.id)}" data-to="${a.to}" class="shrink-0 bg-white/10 hover:bg-white/20 rounded-md px-2 py-1 text-xs">Aplicar</button>` : ''}</span>
+        <span class="block font-normal mt-1 text-slate-300">${esc(a.text)}</span></span>`;
 }
 function feedbackHtml(ex, done) {
     const nums = String(ex.reps).match(/\d+/g) || [];
     const top = nums.length > 1 ? nums[1] : (nums[0] || '');
     const inputs = [...done].sort((x, y) => x - y).map((s) => {
         const v = (S.progress.setReps[ex.id] || {})[s];
-        return `<label class="flex flex-col items-center gap-0.5"><span class="text-[10px] text-slate-500">${s}ª</span>
+        return `<label class="flex flex-col items-center gap-0.5"><span class="text-[10px] text-slate-500">${s}ª${(S.progress.setWeights[ex.id] || {})[s] ? ' · ' + kg(S.progress.setWeights[ex.id][s]) : ''}</span>
             <input type="number" inputmode="numeric" placeholder="${top}" value="${v ?? ''}" data-setreps="${esc(ex.id)}" data-set="${s}"
                 class="w-12 bg-slate-900 border border-slate-700 rounded-lg px-1 py-1 text-center font-bold text-sky-300 focus:outline-none focus:border-sky-500"></label>`;
     }).join('');
@@ -306,9 +320,14 @@ $('#workout-list').addEventListener('click', (e) => {
     const ex = S.plan[day].exercises.find((x) => x.id === id);
     const arr = (S.progress.sets[id] ||= []);
     const i = arr.indexOf(s);
-    if (i > -1) { arr.splice(i, 1); if (S.progress.setReps[id]) delete S.progress.setReps[id][s]; }
-    else {
+    if (i > -1) {
+        arr.splice(i, 1);
+        if (S.progress.setReps[id]) delete S.progress.setReps[id][s];
+        if (S.progress.setWeights[id]) delete S.progress.setWeights[id][s];
+    } else {
         arr.push(s);
+        const cur = Number(S.weights[id]);
+        if (cur > 0) (S.progress.setWeights[id] ||= {})[s] = cur; // carga desta série = a que está no campo agora
         if (!ex.isCardio) { setTimer(restSecs(ex)); startTimer(); }
     }
     scheduleSave();

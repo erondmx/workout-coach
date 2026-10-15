@@ -141,3 +141,42 @@ test('computeAssess avalia o exercício trocado de hoje pelo id temporário', ()
   assert.equal(computeAssess(db).a2s.level, 'top');
   assert.equal(computeAssess(db).a2, undefined);
 });
+
+test('carga por série: avalia só as séries na carga final e avisa a mudança', () => {
+  const ex = { id: 'x', name: 'Leg Press', sets: 4, reps: '12 reps' };
+  const a = assessSets(ex, { 1: 12, 2: 12, 3: 12, 4: 12 }, [1, 2, 3, 4], { 1: 30, 2: 30, 3: 35, 4: 35 });
+  assert.equal(a.weight, 35);
+  assert.equal(a.level, 'top');
+  assert.equal(a.to, 40);
+  assert.match(a.text, /Subiu de 30 kg para 35 kg na 3ª série/);
+});
+test('carga por série: subiu a carga e as reps caíram -> avalia só na carga nova', () => {
+  const ex = { id: 'x', name: 'Leg Press', sets: 4, reps: '12 reps' };
+  // 12,12 com 30 kg; 5,4 com 35 kg -> pesado na carga final, não "dentro da faixa"
+  const a = assessSets(ex, { 1: 12, 2: 12, 3: 5, 4: 4 }, [1, 2, 3, 4], { 1: 30, 2: 30, 3: 35, 4: 35 });
+  assert.equal(a.level, 'very_heavy');
+  assert.equal(a.action, 'down');
+  assert.equal(a.to, 30);
+});
+test('carga por série: subiu e ainda não anotou reps -> pending (não sugere nada)', () => {
+  const ex = { id: 'x', name: 'Leg Press', sets: 4, reps: '12 reps' };
+  const a = assessSets(ex, { 1: 12, 2: 12 }, [1, 2, 3], { 1: 30, 2: 30, 3: 35 });
+  assert.equal(a.level, 'pending');
+  assert.equal(suggest(ex, [{ sets: { x: [1, 2, 3] }, weights: { x: 35 }, setReps: { x: { 1: 12, 2: 12 } }, setWeights: { x: { 1: 30, 2: 30, 3: 35 } } }]), null);
+});
+test('semáforo ao vivo: 17 reps numa faixa 12–15 com 3 séries feitas já indica subir; 12 reps na 1ª série não', () => {
+  const ex = { id: 'x', name: 'Leg Press', sets: 4, reps: '12 a 15 reps' };
+  const live = assessSets(ex, { 1: 17, 2: 17, 3: 17 }, [1, 2, 3], { 1: 30, 2: 30, 3: 30 });
+  assert.equal(live.action, 'up');
+  assert.equal(live.partial, true);
+  assert.equal(live.to, 35);
+  const early = assessSets(ex, { 1: 12 }, [1], { 1: 30 });
+  assert.equal(early.action, 'hold');
+});
+test('suggest usa a carga final do treino anterior', () => {
+  const ex = { id: 'x', name: 'Leg Press', sets: 4, reps: '12 reps' };
+  const h = { sets: { x: [1, 2, 3, 4] }, weights: { x: 30 }, setReps: { x: { 1: 12, 2: 12, 3: 12, 4: 12 } }, setWeights: { x: { 1: 30, 2: 30, 3: 35, 4: 35 } } };
+  const r = suggest(ex, [h]);
+  assert.equal(r.type, 'up');
+  assert.equal(r.to, 40);
+});

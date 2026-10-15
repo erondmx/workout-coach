@@ -57,11 +57,12 @@ export function rollover(db, today) {
       sets: p.sets,
       weights: { ...db.weights },
       setReps: structuredClone(p.setReps || {}),
+      setWeights: structuredClone(p.setWeights || {}),
       note: p.note || '',
     });
     db.history = db.history.slice(-60);
   }
-  db.progress = { date: today, day: p.day, sets: {}, setReps: {}, swaps: {}, note: '' };
+  db.progress = { date: today, day: p.day, sets: {}, setReps: {}, setWeights: {}, swaps: {}, note: '' };
   return true;
 }
 
@@ -117,39 +118,68 @@ const fmtKg = (n) => `${String(Math.round(n * 10) / 10).replace('.', ',')} kg`;
 
 const NOTCH = 1; // um degrau de carga por vez
 
-// Avalia as reps feitas HOJE (ou numa sessão) contra a faixa prescrita.
-// repsMap: { "1": 12, "2": 11, ... } (reps por série); done: séries marcadas.
-// Níveis: very_heavy | heavy | in_range | top | easy | null (sem dados)
-export function assessSets(ex, repsMap, done) {
+// Avalia as reps feitas HOJE (ou numa sessão) contra a faixa prescrita, levando em conta
+// que a carga pode mudar no meio do exercício.
+//  repsMap: { "1": 12, ... } reps por série; done: séries marcadas;
+//  setWeights: { "1": 30, ... } carga de cada série (opcional); fallbackW: carga geral do exercício.
+// Só as séries feitas na carga FINAL (a da última série) entram na avaliação das reps.
+// Retorna { level, action: 'up'|'hold'|'down', weight, to, worst, lo, hi, partial, text } ou null.
+// level: very_heavy | heavy | in_range | top | easy | pending
+export function assessSets(ex, repsMap, done, setWeights = null, fallbackW = 0) {
   const range = parseRepRange(ex.reps);
   if (!range || ex.isCardio) return null;
   const [lo, hi] = range;
-  const logged = (done || [])
-    .map((s) => ({ s, r: repsMap?.[s] }))
-    .filter((x) => x.r != null && Number.isFinite(Number(x.r)))
-    .sort((a, b) => a.s - b.s)
-    .map((x) => Number(x.r));
-  if (!logged.length) return null;
-  const worst = Math.min(...logged);
-  const first = logged[0];
-  const last = logged.at(-1);
-  const drop = first - last;
+  const doneSorted = [...(done || [])].sort((a, b) => a - b);
+  if (!doneSorted.length) return null;
+
+  const wOf = (s) => Number(setWeights?.[s]) || 0;
+  const weighted = doneSorted.filter((s) => wOf(s) > 0);
+  const finalW = weighted.length ? wOf(weighted.at(-1)) : Number(fallbackW) || 0;
+
+  // mudanças de carga durante o exercício (ex.: 30 -> 35 kg a partir da 3ª série)
+  const changes = [];
+  for (let i = 1; i < weighted.length; i++) {
+    const a = wOf(weighted[i - 1]);
+    const b = wOf(weighted[i]);
+    if (a !== b) changes.push(`${b > a ? 'Subiu' : 'Reduziu'} de ${fmtKg(a)} para ${fmtKg(b)} na ${weighted[i]}ª série.`);
+  }
+  const changeNote = changes.length ? ` ${changes.join(' ')}` : '';
+
+  const hasReps = (s) => repsMap?.[s] != null && Number.isFinite(Number(repsMap[s]));
+  const loggedAll = doneSorted.filter(hasReps);
+  const used = loggedAll.filter((s) => !wOf(s) || !finalW || wOf(s) === finalW);
+  const step = finalW > 0 ? stepFor(ex, finalW) * NOTCH : 0;
+  const up = finalW > 0 ? finalW + step : null;
+  const down = finalW > 0 ? Math.max(step, finalW - step) : null;
+  const base = { lo, hi, weight: finalW };
+
+  if (!used.length) {
+    if (!changes.length) return null;
+    return { ...base, level: 'pending', action: 'hold', to: null, text: `${changeNote.trim()} Anote as reps para avaliar a nova carga.` };
+  }
+
+  const reps = used.map((s) => Number(repsMap[s]));
+  const worst = Math.min(...reps);
+  const drop = reps[0] - reps.at(-1);
   const dropNote = drop >= 4 ? ` Queda de ${drop} reps entre a 1ª e a última série: carga pesada ou descanso curto.` : '';
-  const complete = (done || []).length >= ex.sets && logged.length >= ex.sets;
-  const base = { worst, lo, hi };
+  const complete = doneSorted.length >= ex.sets && loggedAll.length >= ex.sets;
+  const where = changes.length ? `na carga final (${fmtKg(finalW)})` : '';
+  const head = `Pior série${where ? ` ${where}` : ''}: ${worst} reps`;
+  const b = { ...base, worst };
+
   if (worst < lo * 0.7) {
-    return { ...base, level: 'very_heavy', text: `Pior série: ${worst} reps (previsto ${lo}–${hi}). Carga pesada demais.${dropNote}` };
+    return { ...b, level: 'very_heavy', action: 'down', to: down, text: `${head} (previsto ${lo}–${hi}). Carga pesada demais.${dropNote}${changeNote}` };
   }
   if (worst < lo) {
-    return { ...base, level: 'heavy', text: `Pior série: ${worst} reps, abaixo da faixa (${lo}–${hi}). Carga no limite.${dropNote}` };
-  }
-  if (worst < hi || !complete) {
-    return { ...base, level: 'in_range', text: `Pior série: ${worst} reps, dentro da faixa. Busque ${hi} em todas as séries.${dropNote}` };
+    return { ...b, level: 'heavy', action: 'hold', to: null, text: `${head}, abaixo da faixa (${lo}–${hi}). Carga no limite.${dropNote}${changeNote}` };
   }
   if (worst >= hi + 2) {
-    return { ...base, level: 'easy', text: `Pior série: ${worst} reps, ${worst - hi} acima do topo. Carga leve.${dropNote}` };
+    return { ...b, level: 'easy', action: 'up', to: up, partial: !complete, text: `${head}, ${worst - hi} acima do topo. Carga leve.${dropNote}${changeNote}` };
   }
-  return { ...base, level: 'top', text: `Todas as séries no topo da faixa (${hi}+). Pronto para mais carga.${dropNote}` };
+  if (worst >= hi && complete) {
+    return { ...b, level: 'top', action: 'up', to: up, partial: false, text: `Todas as séries no topo da faixa (${hi}+).${dropNote}${changeNote}` };
+  }
+  return { ...b, level: 'in_range', action: 'hold', to: null, text: `${head}, dentro da faixa. Busque ${hi} em todas as séries.${dropNote}${changeNote}` };
 }
 
 // Dica de carga para o PRÓXIMO treino, a partir das sessões arquivadas (dupla progressão):
@@ -165,12 +195,12 @@ export function suggest(ex, history) {
     .filter((h) => (h.sets?.[ex.id] || []).length > 0)
     .slice(-2)
     .map((h) => ({
-      w: Number(h.weights?.[ex.id]) || 0,
       done: h.sets[ex.id].length,
-      a: assessSets(ex, h.setReps?.[ex.id], h.sets[ex.id]),
-    }));
+      a: assessSets(ex, h.setReps?.[ex.id], h.sets[ex.id], h.setWeights?.[ex.id], h.weights?.[ex.id]),
+    }))
+    .map((s) => ({ ...s, w: s.a?.weight || 0 }));
   const last = sessions.at(-1);
-  if (!last || !(last.w > 0) || !last.a) return null;
+  if (!last || !(last.w > 0) || !last.a || last.a.level === 'pending') return null;
 
   const w = last.w;
   const step = stepFor(ex, w) * NOTCH;
@@ -211,7 +241,7 @@ export function computeAssess(db) {
   const out = {};
   for (const day of Object.values(applySwaps(db.plan, db.progress.swaps))) {
     for (const ex of day.exercises) {
-      const a = assessSets(ex, db.progress.setReps?.[ex.id], db.progress.sets?.[ex.id]);
+      const a = assessSets(ex, db.progress.setReps?.[ex.id], db.progress.sets?.[ex.id], db.progress.setWeights?.[ex.id], db.weights?.[ex.id]);
       if (a) out[ex.id] = a;
     }
   }

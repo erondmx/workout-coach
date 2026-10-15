@@ -38,7 +38,7 @@ function freshDb() {
     plan: structuredClone(defaultPlan),
     planHistory: [],
     weights: {},
-    progress: { date: todayStr(TZ), day: 'A', sets: {}, setReps: {}, swaps: {}, note: '' },
+    progress: { date: todayStr(TZ), day: 'A', sets: {}, setReps: {}, setWeights: {}, swaps: {}, note: '' },
     history: [],
     chat: [],
   };
@@ -114,6 +114,7 @@ function auth(req, res, next) {
 function view() {
   if (rollover(db, todayStr(TZ))) save();
   db.progress.setReps ??= {};
+  db.progress.setWeights ??= {};
   db.progress.swaps ??= {};
   return {
     plan: applySwaps(db.plan, db.progress.swaps),
@@ -133,7 +134,7 @@ app.get('/api/state', auth, (req, res) => res.json(view()));
 
 app.put('/api/state', auth, (req, res) => {
   view(); // garante rollover antes de gravar
-  const { sets, weights, setReps, day } = req.body || {};
+  const { sets, weights, setReps, setWeights, day } = req.body || {};
   if (sets && typeof sets === 'object') {
     const clean = {};
     for (const [id, arr] of Object.entries(sets)) {
@@ -166,6 +167,20 @@ app.put('/api/state', auth, (req, res) => {
     }
     db.progress.setReps = clean;
   }
+  if (setWeights && typeof setWeights === 'object') {
+    const clean = {};
+    for (const [id, bySet] of Object.entries(setWeights)) {
+      if (!ID_RE.test(id) || !bySet || typeof bySet !== 'object') continue;
+      for (const [k, w] of Object.entries(bySet)) {
+        const set = Number(k);
+        const n = Number(w);
+        if (Number.isInteger(set) && set >= 1 && set <= 10 && w !== '' && w != null && Number.isFinite(n) && n > 0 && n <= 1000) {
+          (clean[id] ||= {})[set] = n;
+        }
+      }
+    }
+    db.progress.setWeights = clean;
+  }
   if (DAYS.includes(day)) db.progress.day = day;
   save();
   res.json({ ok: true, assess: computeAssess(db) });
@@ -175,6 +190,7 @@ app.post('/api/reset-day', auth, (req, res) => {
   view();
   db.progress.sets = {};
   db.progress.setReps = {};
+  db.progress.setWeights = {};
   db.progress.swaps = {};
   save();
   res.json(view());
@@ -207,7 +223,7 @@ app.post('/api/coach', auth, express.json({ limit: '12mb' }), async (req, res) =
           if (ids.has(id)) ids.add(swapId(id));
           else delete db.progress.swaps[id];
         }
-        for (const bag of [db.progress.sets, db.progress.setReps]) {
+        for (const bag of [db.progress.sets, db.progress.setReps, db.progress.setWeights]) {
           for (const id of Object.keys(bag)) if (!ids.has(id)) delete bag[id];
         }
       }

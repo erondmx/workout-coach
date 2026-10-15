@@ -70,3 +70,13 @@ diz se serve e escolhe entre `substitute_today` (só hoje: o card mostra "Hoje, 
 no histórico de progressão, pois a carga é de outra máquina) ou `update_day` (troca definitiva, com id novo e "Desfazer").
 As fotos não são gravadas no servidor (só a contagem no chat) e vão ao provedor do modelo (OpenRouter): evite mostrar rostos.
 O reconhecimento de aparelhos por foto pode errar; o coach é instruído a admitir incerteza e a recomendar ler as instruções da máquina.
+
+## Carga por série e semáforo
+
+A carga é registrada **por série**: ao marcar uma série, o app guarda a carga que está no campo naquele momento.
+Se você mudar de 30 para 35 kg na 3ª série, fica "30, 30, 35, 35". A avaliação considera só as séries feitas na
+**carga final** (as reps com 30 kg não são cobradas dos 35 kg) e avisa a mudança.
+
+Cada exercício mostra um semáforo ao vivo (regras do app, sem LLM): verde = subir (com a carga sugerida e botão Aplicar),
+amarelo = manter, vermelho = reduzir. Subir só aparece com todas as séries no topo da faixa ou com reps 2+ acima do topo.
+O coach (LLM) recebe reps, cargas por série e o semáforo, e comenta; a decisão de carga é da regra e sua.

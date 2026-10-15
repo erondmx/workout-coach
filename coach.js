@@ -16,6 +16,7 @@ Regras:
 - Explique no texto, em 1-2 frases, o que mudou e por quê.
 - FOTOS DE APARELHOS: o usuário pode mandar fotos da academia (e dizer qual exercício não achou, com o id). Descreva em 1 frase o que você identificou e quão seguro está; se a foto não permitir identificar, peça outra mais de perto ou o nome na placa, e NUNCA invente. Diga se o aparelho serve para o exercício/grupo muscular e como usar de forma resumida. Para trocar só por hoje (padrão, se o usuário não disse que é definitivo), use substitute_today; se ele pedir para trocar "para sempre", use update_day com um id NOVO para o exercício trocado (assim a carga do aparelho antigo não se mistura). Mantenha o mesmo grupo muscular e séries/reps parecidas. Lembre de ler as instruções do aparelho, começar leve e pedir ajuda a um instrutor se não souber usar. Não comente sobre pessoas que apareçam nas fotos.
 - Use o histórico (séries, cargas, repetições feitas em cada série) para decidir progressão.
+- A carga pode mudar no meio do exercício (cargaPorSerie). A avaliação considera só as séries na carga final; comente a mudança (ex.: subiu de 30 para 35 kg na 3ª série) e, se o usuário disser que achou fácil/pesado, use isso na conversa.
 - O app já mostra na tela uma dica automática de carga por exercício (dupla progressão: todas as séries no topo da faixa de reps → subir um degrau; pior série abaixo de 70% do mínimo da faixa → descer um degrau; abaixo da faixa → manter, 2x seguidas → descer; dentro da faixa → manter e buscar o topo). Pesos reais da academia: máquinas e barra variam de 5 em 5 kg, halteres de 1 a 2 kg (nunca sugira cargas quebradas tipo 32,5 kg). Veja "SUGESTÕES AUTOMÁTICAS" abaixo e NÃO contradiga essas dicas sem motivo; mudanças de carga ficam por conta do usuário, você ajusta séries, repetições, exercícios e descanso.`;
 
 const TOOLS = [
@@ -74,8 +75,8 @@ const TOOLS = [
 function context(db) {
   const recent = db.history.slice(-8);
   const hints = Object.fromEntries(Object.entries(computeHints(db)).map(([id, h]) => [id, h.text]));
-  const today = { séries: db.progress.sets, repsPorSerie: db.progress.setReps || {}, avaliação: Object.fromEntries(Object.entries(computeAssess(db)).map(([id, a]) => [id, a.text])) };
-  return `PLANO ATUAL (JSON):\n${JSON.stringify(db.plan)}\n\nCARGAS ATUAIS (kg por id de exercício):\n${JSON.stringify(db.weights)}\n\nPROGRESSO DE HOJE (${db.progress.date}, dia ${db.progress.day}):\n${JSON.stringify(today)}\n\nÚLTIMOS TREINOS (séries feitas, cargas e reps por série, por id):\n${JSON.stringify(recent)}\n\nSUGESTÕES AUTOMÁTICAS DE CARGA (já exibidas ao usuário):\n${JSON.stringify(hints)}`;
+  const today = { séries: db.progress.sets, repsPorSerie: db.progress.setReps || {}, cargaPorSerie: db.progress.setWeights || {}, avaliação: Object.fromEntries(Object.entries(computeAssess(db)).map(([id, a]) => [id, a.text])) };
+  return `PLANO ATUAL (JSON):\n${JSON.stringify(db.plan)}\n\nCARGAS ATUAIS (kg por id de exercício):\n${JSON.stringify(db.weights)}\n\nPROGRESSO DE HOJE (${db.progress.date}, dia ${db.progress.day}):\n${JSON.stringify(today)}\n\nÚLTIMOS TREINOS (séries feitas, cargas e reps por série, por id; a carga final do exercício é a da última série):\n${JSON.stringify(recent)}\n\nSUGESTÕES AUTOMÁTICAS DE CARGA (já exibidas ao usuário):\n${JSON.stringify(hints)}`;
 }
 
 // Retorna { reply, changes: [{day, day_plan, reason}] }. Não altera o db.
