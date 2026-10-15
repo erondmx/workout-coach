@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 const ID_RE = /^[a-z0-9_-]{1,24}$/;
-export const DAYS = ['A', 'B', 'C'];
+export const DAY_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F']; // até 6 dias de treino
 export const EQUIPS = ['machine', 'dumbbell', 'barbell'];
 
 // Valida e normaliza um dia de treino vindo do LLM. Lança Error com mensagem clara.
@@ -291,4 +291,52 @@ export function sanitizeSwap(plan, input) {
   const name = String(input?.name || '').trim().slice(0, 120);
   if (!name) throw new Error('nome vazio');
   return { id, swap: { name, equip: EQUIPS.includes(input?.equip) ? input.equip : undefined, reason: String(input?.reason || '').slice(0, 200) } };
+}
+
+// ---------- plano com número de dias variável ----------
+export const MAX_DAYS = DAY_LETTERS.length;
+
+// Os ids dos exercícios precisam ser únicos no plano inteiro: cargas e histórico são guardados por id.
+export function assertUniqueIds(plan) {
+  const seen = new Map();
+  for (const [d, day] of Object.entries(plan)) {
+    for (const ex of day.exercises) {
+      if (seen.has(ex.id)) throw new Error(`id "${ex.id}" repetido nos dias ${seen.get(ex.id)} e ${d}`);
+      seen.set(ex.id, d);
+    }
+  }
+}
+
+// Valida um plano completo vindo do LLM: [{ day: 'A', title, desc, exercises: [...] }, ...]
+export function sanitizePlan(days) {
+  if (!Array.isArray(days) || days.length < 1 || days.length > MAX_DAYS) throw new Error(`o plano precisa ter de 1 a ${MAX_DAYS} dias`);
+  const plan = {};
+  for (const d of days) {
+    const letter = String(d?.day || '').toUpperCase();
+    if (!DAY_LETTERS.includes(letter)) throw new Error(`dia inválido: ${d?.day}`);
+    if (plan[letter]) throw new Error(`dia ${letter} repetido`);
+    plan[letter] = sanitizeDay(d);
+  }
+  const ordered = Object.fromEntries(Object.entries(plan).sort(([a], [b]) => a.localeCompare(b)));
+  assertUniqueIds(ordered);
+  return ordered;
+}
+
+// Último treino arquivado de cada exercício do plano: [{ set, reps, weight }] por série feita.
+export function lastSessions(db) {
+  const out = {};
+  for (const day of Object.values(db.plan)) {
+    for (const ex of day.exercises) {
+      if (ex.isCardio) continue;
+      const h = [...db.history].reverse().find((x) => (x.sets?.[ex.id] || []).length > 0);
+      if (!h) continue;
+      const sets = [...h.sets[ex.id]].sort((a, b) => a - b).map((s) => ({
+        set: s,
+        reps: h.setReps?.[ex.id]?.[s] ?? null,
+        weight: Number(h.setWeights?.[ex.id]?.[s]) || Number(h.weights?.[ex.id]) || null,
+      }));
+      out[ex.id] = { date: h.date, sets };
+    }
+  }
+  return out;
 }

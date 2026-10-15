@@ -86,3 +86,14 @@ O coach (LLM) recebe reps, cargas por série e o semáforo, e comenta; a decisã
 Cada exercício tem o link "Anotação", que abre um campo de texto (até 1000 caracteres) salvo no servidor por exercício
 (`notes` no `db.json`). A anotação vale para todos os treinos seguintes e já aparece aberta quando existe. "Excluir" apaga;
 apagar todo o texto também remove. O coach lê as anotações (dores, ajuste de banco etc.) ao conversar.
+
+## Número de dias variável (1 a 6) e histórico
+
+O plano pode ter de 1 a 6 dias (letras A–F). Diga ao coach "agora vou 4 vezes por semana" (e, se quiser, "A = peito e costas"):
+ele usa a ferramenta `set_plan` para remontar o plano inteiro. Cargas (`weights`), histórico (`history`) e anotações (`notes`)
+são guardados **por id de exercício** e nunca são apagados numa remontagem: exercícios que continuam no plano, mesmo mudando de dia,
+mantêm o histórico (o coach é instruído a reaproveitar os ids). O servidor exige ids únicos no plano todo e guarda o plano anterior
+para o "Desfazer". Só o progresso **de hoje** de exercícios que deixaram de existir é descartado.
+
+Ao abrir um exercício, aparece "Última vez (dd/mm): reps×carga por série" vindo do último treino arquivado.
+Cada dia é arquivado (até 60 sessões) quando a data muda.

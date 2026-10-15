@@ -180,3 +180,37 @@ test('suggest usa a carga final do treino anterior', () => {
   assert.equal(r.type, 'up');
   assert.equal(r.to, 40);
 });
+
+import { sanitizePlan, assertUniqueIds, lastSessions } from './lib.js';
+
+const exr = (id, extra = {}) => ({ id, name: `Ex ${id}`, sets: 3, reps: '12 reps', ...extra });
+
+test('sanitizePlan aceita 4 dias, ordena as letras e valida', () => {
+  const p = sanitizePlan([
+    { day: 'B', title: 'B', exercises: [exr('b1')] },
+    { day: 'A', title: 'A', exercises: [exr('a1')] },
+    { day: 'D', title: 'D', exercises: [exr('d1')] },
+    { day: 'C', title: 'C', exercises: [exr('c1')] },
+  ]);
+  assert.deepEqual(Object.keys(p), ['A', 'B', 'C', 'D']);
+});
+test('sanitizePlan rejeita dia repetido, letra inválida, vazio e 7 dias', () => {
+  assert.throws(() => sanitizePlan([{ day: 'A', title: 'x', exercises: [exr('a1')] }, { day: 'A', title: 'x', exercises: [exr('a2')] }]), /repetido/);
+  assert.throws(() => sanitizePlan([{ day: 'Z', title: 'x', exercises: [exr('a1')] }]), /inválido/);
+  assert.throws(() => sanitizePlan([]), /de 1 a 6/);
+  assert.throws(() => sanitizePlan('x'), /de 1 a 6/);
+});
+test('ids únicos no plano todo (histórico é por id)', () => {
+  assert.throws(() => sanitizePlan([{ day: 'A', title: 'A', exercises: [exr('x1')] }, { day: 'B', title: 'B', exercises: [exr('x1')] }]), /repetido nos dias A e B/);
+  assert.doesNotThrow(() => assertUniqueIds({ A: { exercises: [exr('a')] }, B: { exercises: [exr('b')] } }));
+});
+test('exercício pode mudar de dia mantendo o id (histórico acompanha)', () => {
+  const plan = sanitizePlan([{ day: 'A', title: 'A', exercises: [exr('a2')] }, { day: 'D', title: 'D', exercises: [exr('a3')] }]);
+  const db = {
+    plan,
+    history: [{ date: '2026-10-08', day: 'A', sets: { a3: [1, 2] }, weights: { a3: 14 }, setReps: { a3: { 1: 12, 2: 11 } }, setWeights: { a3: { 1: 14, 2: 16 } } }],
+  };
+  const l = lastSessions(db);
+  assert.deepEqual(l.a3.sets, [{ set: 1, reps: 12, weight: 14 }, { set: 2, reps: 11, weight: 16 }]);
+  assert.equal(l.a2, undefined);
+});

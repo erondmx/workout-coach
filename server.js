@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultPlan } from './defaultPlan.js';
 import { askCoach } from './coach.js';
-import { DAYS, applySwaps, checkToken, computeAssess, computeHints, makeToken, rollover, safeEqual, sanitizeImages, swapId, todayStr } from './lib.js';
+import { DAY_LETTERS, applySwaps, assertUniqueIds, lastSessions, checkToken, computeAssess, computeHints, makeToken, rollover, safeEqual, sanitizeImages, swapId, todayStr } from './lib.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -117,12 +117,14 @@ function view() {
   db.progress.setReps ??= {};
   db.progress.setWeights ??= {};
   db.progress.swaps ??= {};
+  if (!db.plan[db.progress.day]) db.progress.day = Object.keys(db.plan)[0];
   return {
     plan: applySwaps(db.plan, db.progress.swaps),
     weights: db.weights,
     progress: db.progress,
     hints: computeHints(db),
     notes: db.notes,
+    last: lastSessions(db),
     assess: computeAssess(db),
     chat: db.chat.slice(-40),
     canUndo: db.planHistory.length > 0,
@@ -183,7 +185,7 @@ app.put('/api/state', auth, (req, res) => {
     }
     db.progress.setWeights = clean;
   }
-  if (DAYS.includes(day)) db.progress.day = day;
+  if (DAY_LETTERS.includes(day) && db.plan[day]) db.progress.day = day;
   save();
   res.json({ ok: true, assess: computeAssess(db) });
 });
@@ -224,29 +226,39 @@ app.post('/api/coach', auth, express.json({ limit: '12mb' }), async (req, res) =
   coachBusy = true;
   try {
     view();
-    const { reply, changes, swaps } = await askCoach(db, text, images);
-    for (const s of swaps) db.progress.swaps[s.id] = s.swap;
-    if (changes.length) {
-      db.planHistory.push({ at: new Date().toISOString(), plan: structuredClone(db.plan) });
-      db.planHistory = db.planHistory.slice(-10);
-      for (const c of changes) {
-        db.plan[c.day] = c.plan;
-        // remove progresso de séries de exercícios que não existem mais
+    const { reply: coachReply, changes, swaps, replace } = await askCoach(db, text, images);
+    let reply = coachReply;
+    let planChanged = [];
+    if (replace || changes.length) {
+      const next = replace ? structuredClone(replace.plan) : structuredClone(db.plan);
+      if (!replace) for (const c of changes) next[c.day] = c.plan;
+      try {
+        assertUniqueIds(next); // ids únicos no plano todo: cargas e histórico são guardados por id
+        db.planHistory.push({ at: new Date().toISOString(), plan: structuredClone(db.plan) });
+        db.planHistory = db.planHistory.slice(-10);
+        db.plan = Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b)));
+        planChanged = replace ? Object.keys(db.plan) : changes.map((c) => c.day);
+        // o histórico (db.history) e as cargas (db.weights) NÃO são tocados: continuam valendo por id de exercício
+        if (!db.plan[db.progress.day]) db.progress.day = Object.keys(db.plan)[0];
         const ids = new Set(Object.values(db.plan).flatMap((d) => d.exercises.map((e) => e.id)));
         for (const id of Object.keys(db.progress.swaps)) {
           if (ids.has(id)) ids.add(swapId(id));
           else delete db.progress.swaps[id];
         }
+        // só o progresso de HOJE de exercícios que deixaram de existir é descartado
         for (const bag of [db.progress.sets, db.progress.setReps, db.progress.setWeights]) {
           for (const id of Object.keys(bag)) if (!ids.has(id)) delete bag[id];
         }
+      } catch (err) {
+        reply += `\n\n(Não apliquei a mudança de plano: ${err.message}.)`;
       }
     }
+    for (const s of swaps) if (Object.values(db.plan).some((d) => d.exercises.some((e) => e.id === s.id))) db.progress.swaps[s.id] = s.swap;
     db.chat.push({ role: 'user', text, photos: images.length });
-    db.chat.push({ role: 'assistant', text: reply, changed: changes.map((c) => c.day), swapped: swaps.map((x) => x.swap.name) });
+    db.chat.push({ role: 'assistant', text: reply, changed: planChanged, swapped: swaps.map((x) => x.swap.name) });
     db.chat = db.chat.slice(-60);
     save();
-    res.json({ reply, changed: changes.map((c) => c.day), swapped: swaps.length, state: view() });
+    res.json({ reply, changed: planChanged, swapped: swaps.length, state: view() });
   } catch (err) {
     console.error('coach error:', err.message);
     const status = err.status === 503 ? 503 : 502;

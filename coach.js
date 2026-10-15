@@ -1,16 +1,17 @@
-import { sanitizeDay, sanitizeSwap, computeHints, computeAssess, DAYS } from './lib.js';
+import { sanitizeDay, sanitizeSwap, computeHints, computeAssess, sanitizePlan, assertUniqueIds, DAY_LETTERS } from './lib.js';
 
 export const MODEL = process.env.COACH_MODEL || 'anthropic/claude-sonnet-5.5';
 const EFFORT = process.env.COACH_REASONING || 'low';
 const BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 
 const SYSTEM = `Você é o coach pessoal de musculação do usuário, falando em português do Brasil, de forma direta, motivadora e curta (no máximo uns 6 linhas, sem enrolação).
-Objetivo do usuário: emagrecimento e definição, treino em 3 dias (A empurrar, B puxar, C pernas), academia comum.
+Objetivo do usuário: emagrecimento e definição, academia comum. O plano tem de 1 a 6 dias (letras A a F); o plano atual está em PLANO ATUAL.
 
 Regras:
 - O usuário relata o que fez, dificuldades, dores, falta de tempo ou equipamento. Responda ao relato e, quando fizer sentido, AJUSTE o plano usando a ferramenta update_day. Só ajuste quando houver motivo claro; não mexa no plano a troco de nada.
 - Ajustes típicos: subir/baixar séries ou repetições (progressão), trocar exercício por dor/indisponibilidade, mudar descanso, encurtar treino por falta de tempo, mudar cardio.
 - Dor aguda, tontura, dor no peito ou lesão: oriente a parar e procurar um profissional de saúde; não prescreva treino para tratar lesão. Nada de dieta restritiva extrema ou suplemento/medicação.
+- MUDAR A FREQUÊNCIA ou a divisão (ex.: "agora vou 4 vezes por semana", "quero treino A peito e costas"): use set_plan com o plano INTEIRO. Se o usuário não disser a divisão, escolha uma boa para o número de dias e o objetivo (emagrecimento/definição) e explique em 1-2 frases. Respeite pedidos específicos (ex.: "A = peito e costas"). REGRA DE OURO: ao remontar, reaproveite os MESMOS ids para exercícios que continuam no plano (mesmo movimento/aparelho), mesmo que mudem de dia — é assim que o histórico de cargas e reps do usuário é preservado. Só crie id novo para exercício realmente novo, e NUNCA reutilize o id de um exercício para outro movimento. Ids são únicos no plano todo. Mantenha o treino de pernas, cardio e abdômen distribuídos e dias de descanso implícitos entre sessões do mesmo grupo.
 - Ao chamar update_day, envie o dia COMPLETO (todos os exercícios). Mantenha o mesmo id dos exercícios que permanecem (assim a carga registrada é preservada) e crie ids novos curtos (ex.: a9) só para exercícios novos.
 - "rest" é só número de segundos (ex.: "60"). Exercícios de cardio usam isCardio=true e sets=1. Informe equip (machine/dumbbell/barbell) nos exercícios de força.
 - Explique no texto, em 1-2 frases, o que mudou e por quê.
@@ -18,6 +19,20 @@ Regras:
 - Use o histórico (séries, cargas, repetições feitas em cada série) para decidir progressão.
 - A carga pode mudar no meio do exercício (cargaPorSerie). A avaliação considera só as séries na carga final; comente a mudança (ex.: subiu de 30 para 35 kg na 3ª série) e, se o usuário disser que achou fácil/pesado, use isso na conversa.
 - O app já mostra na tela uma dica automática de carga por exercício (dupla progressão: todas as séries no topo da faixa de reps → subir um degrau; pior série abaixo de 70% do mínimo da faixa → descer um degrau; abaixo da faixa → manter, 2x seguidas → descer; dentro da faixa → manter e buscar o topo). Pesos reais da academia: máquinas e barra variam de 5 em 5 kg, halteres de 1 a 2 kg (nunca sugira cargas quebradas tipo 32,5 kg). Veja "SUGESTÕES AUTOMÁTICAS" abaixo e NÃO contradiga essas dicas sem motivo; mudanças de carga ficam por conta do usuário, você ajusta séries, repetições, exercícios e descanso.`;
+
+const EXERCISE_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', description: 'Mantenha o id de exercícios que já existem; id novo e curto só para exercício novo' },
+    name: { type: 'string' },
+    sets: { type: 'integer' },
+    reps: { type: 'string' },
+    rest: { type: 'string', description: 'segundos, ex.: "60"' },
+    isCardio: { type: 'boolean' },
+    equip: { type: 'string', enum: ['machine', 'dumbbell', 'barbell'], description: 'machine = máquina/polia (pesos de 5 em 5 kg); dumbbell = halteres; barbell = barra/Smith' },
+  },
+  required: ['id', 'name', 'sets', 'reps'],
+};
 
 const TOOLS = [
   {
@@ -41,32 +56,44 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'update_day',
-      description: 'Substitui o plano completo de um dia de treino (A, B ou C). Pode ser chamada uma vez por dia afetado.',
+      description: 'Substitui o plano completo de UM dia de treino (letra A a F; uma letra nova cria o dia). Para pequenos ajustes. Para mudar o número de dias ou redistribuir exercícios, use set_plan.',
       parameters: {
         type: 'object',
         properties: {
-          day: { type: 'string', enum: DAYS },
+          day: { type: 'string', enum: DAY_LETTERS },
           title: { type: 'string' },
           desc: { type: 'string', description: 'Dica curta do dia' },
           reason: { type: 'string', description: 'Motivo do ajuste, em uma frase' },
-          exercises: {
+          exercises: { type: 'array', items: EXERCISE_SCHEMA },
+        },
+        required: ['day', 'exercises', 'reason'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_plan',
+      description: 'Remonta o plano INTEIRO com de 1 a 6 dias (letras A a F, sem repetir). Dias que não forem listados deixam de existir. Use ao mudar a frequência semanal ou a divisão dos treinos. Ids de exercícios devem ser únicos no plano todo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string', description: 'Motivo/resumo da nova divisão, em uma frase' },
+          days: {
             type: 'array',
             items: {
               type: 'object',
               properties: {
-                id: { type: 'string' },
-                name: { type: 'string' },
-                sets: { type: 'integer' },
-                reps: { type: 'string' },
-                rest: { type: 'string', description: 'segundos, ex.: "60"' },
-                isCardio: { type: 'boolean' },
-              equip: { type: 'string', enum: ['machine', 'dumbbell', 'barbell'], description: 'machine = máquina/polia (pesos de 5 em 5 kg); dumbbell = halteres; barbell = barra/Smith' },
+                day: { type: 'string', enum: DAY_LETTERS },
+                title: { type: 'string', description: 'Ex.: "Treino A: Peito e Tríceps"' },
+                desc: { type: 'string' },
+                exercises: { type: 'array', items: EXERCISE_SCHEMA },
               },
-              required: ['id', 'name', 'sets', 'reps'],
+              required: ['day', 'title', 'exercises'],
             },
           },
         },
-        required: ['day', 'exercises', 'reason'],
+        required: ['reason', 'days'],
       },
     },
   },
@@ -115,8 +142,9 @@ export async function askCoach(db, userMessage, images = []) {
   const changes = [];
   const swaps = [];
   const rejected = [];
+  let replace = null; // plano inteiro novo (set_plan)
   for (const call of msg.tool_calls || []) {
-    if (!['update_day', 'substitute_today'].includes(call.function?.name)) continue;
+    if (!['update_day', 'substitute_today', 'set_plan'].includes(call.function?.name)) continue;
     let args = {};
     try {
       args = JSON.parse(call.function.arguments || '{}');
@@ -132,20 +160,33 @@ export async function askCoach(db, userMessage, images = []) {
       }
       continue;
     }
+    if (call.function.name === 'set_plan') {
+      try {
+        replace = { plan: sanitizePlan(args.days), reason: String(args.reason || '') };
+      } catch (err) {
+        rejected.push(`plano: ${err.message}`);
+      }
+      continue;
+    }
     const { day, reason, ...rest } = args;
     try {
-      if (!DAYS.includes(day)) throw new Error('dia inválido');
-      const base = db.plan[day];
+      if (!DAY_LETTERS.includes(day)) throw new Error('dia inválido');
+      const base = db.plan[day] || { title: `Treino ${day}`, desc: '' };
       const plan = sanitizeDay({ title: base.title, desc: base.desc, ...rest });
+      assertUniqueIds({ ...db.plan, [day]: plan });
       changes.push({ day, plan, reason: String(reason || '') });
     } catch (err) {
       rejected.push(`${day}: ${err.message}`);
     }
   }
   reply = reply.trim();
-  if (!reply && changes.length) reply = changes.map((x) => `Treino ${x.day} ajustado: ${x.reason}`).join('\n');
-  if (rejected.length) reply += `
-
-(Não consegui aplicar um ajuste: ${rejected.join('; ')}. Tente pedir de novo.)`;
-  return { reply: reply || 'Ok!', changes, swaps };
+  if (!reply && (replace || changes.length || swaps.length)) {
+    reply = [
+      ...(replace ? [`Plano remontado em ${Object.keys(replace.plan).length} dias: ${replace.reason}`] : []),
+      ...changes.map((x) => `Treino ${x.day} ajustado: ${x.reason}`),
+      ...swaps.map((x) => `Hoje: ${x.swap.name}. ${x.reason}`),
+    ].join('\n');
+  }
+  if (rejected.length) reply += `\n\n(Não consegui aplicar um ajuste: ${rejected.join('; ')}. Tente pedir de novo.)`;
+  return { reply: reply || 'Ok!', changes, swaps, replace };
 }

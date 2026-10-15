@@ -65,11 +65,7 @@
         </div>
     </div>
 
-    <div class="grid grid-cols-3 gap-2 mt-4">
-        <button data-day="A" class="tab-btn py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia 1 (A)</button>
-        <button data-day="B" class="tab-btn py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia 2 (B)</button>
-        <button data-day="C" class="tab-btn py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia 3 (C)</button>
-    </div>
+    <div id="tabs" class="grid gap-2 mt-4"></div>
 </header>
 
 <main class="p-4 pb-40">
@@ -171,25 +167,42 @@ $('#logout-btn').addEventListener('click', async () => { await api('POST', '/api
 
 async function load() {
     S = await api('GET', '/api/state');
-    day = S.progress.day || 'A';
+    day = S.plan[S.progress.day] ? S.progress.day : Object.keys(S.plan)[0];
     switchDay(day);
     renderChat();
 }
 
 // ---------- treino ----------
+function renderTabs() {
+    const keys = Object.keys(S.plan);
+    const tabs = $('#tabs');
+    tabs.style.gridTemplateColumns = `repeat(${Math.min(keys.length, 4)}, minmax(0, 1fr))`;
+    tabs.innerHTML = keys.map((k, i) => `<button data-day="${k}" class="tab-btn ${k === day ? 'active' : ''} py-2 px-3 rounded-lg text-sm font-semibold border border-slate-600 bg-slate-700/50 transition">Dia ${i + 1} (${k})</button>`).join('');
+}
 function switchDay(d) {
-    day = d;
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.day === d));
+    day = S.plan[d] ? d : Object.keys(S.plan)[0];
+    d = day;
+    renderTabs();
     const p = S.plan[d];
     $('#day-title').textContent = p.title;
     $('#day-desc').textContent = p.desc;
     render();
     scheduleSave();
 }
-document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => switchDay(b.dataset.day)));
+$('#tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-day]');
+    if (b) switchDay(b.dataset.day);
+});
 
 function restSecs(ex) { return ex.rest ? parseInt(ex.rest, 10) : 45; }
 
+function lastHtml(ex) {
+    const l = !ex.isCardio && S.last && S.last[ex.id];
+    if (!l) return '';
+    const [, m, d] = String(l.date).split('-');
+    const parts = l.sets.map((s) => `${s.reps ?? '–'}×${s.weight ?? '?'}`).join(' · ');
+    return `<p class="mt-2 text-[11px] text-slate-400"><i class="fa-regular fa-clock mr-1"></i>Última vez (${d}/${m}): ${esc(parts)} kg</p>`;
+}
 const HINT_STYLE = {
     up: ['bg-emerald-500/10 border-emerald-500/40 text-emerald-300', 'fa-arrow-trend-up'],
     down: ['bg-amber-500/10 border-amber-500/40 text-amber-300', 'fa-arrow-trend-down'],
@@ -316,6 +329,7 @@ function render() {
                         class="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-orange-400 focus:outline-none focus:border-orange-500">
                 </div>`}
             </div>
+            ${lastHtml(ex)}
             ${hintHtml(ex, w)}
             <div class="mt-3 pt-3 border-t border-slate-700/60 flex items-center justify-between">
                 <span class="text-xs text-slate-400">${ex.isCardio ? 'Status:' : 'Marcar séries:'}</span>
@@ -542,7 +556,7 @@ $('#chat-form').addEventListener('submit', async (e) => {
         await api('PUT', '/api/state', progressPayload()); // coach vê o que você acabou de marcar
         const r = await api('POST', '/api/coach', { message: text, images: sending });
         S = r.state;
-        if (r.changed.length) day = r.changed[0];
+        if (r.changed.length && !r.changed.includes(day)) day = r.changed[0];
         switchDay(day);
     } catch (err) {
         S.chat.pop();
